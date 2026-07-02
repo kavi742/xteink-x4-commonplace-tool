@@ -31,6 +31,15 @@ A homelab service that automatically archives screenshots and reading progress f
 - The service MUST skip files already in the sync state table.
 - The service MUST download BMP files via `/download`.
 - The service MUST convert BMP to PNG using Pillow.
+- The service MUST OCR each PNG using `pytesseract`/Tesseract and embed the
+  extracted text in the daily note (e.g. under a collapsible callout below
+  the image embed) so screenshots are full‑text searchable within
+  Obsidian's native search — Obsidian does not OCR images itself.
+- The service MUST gracefully skip OCR on a given image (logging a warning,
+  not failing the sync) if Tesseract is unavailable or extraction errors
+  out, per the project's graceful‑degradation principle.
+- The service MUST store the extracted OCR text in the state table so a
+  re‑run never re‑OCRs an already‑synced file.
 - The service MUST write PNGs to `Commonplace/<Book>/attachments/`.
 - The service MUST write/append to `Commonplace/<Book>/YYYY-MM-DD.md`.
 - The service MUST mark synced files in the state table.
@@ -70,6 +79,7 @@ A homelab service that automatically archives screenshots and reading progress f
 ### NFR1: Performance
 - Poll interval: 5‑10 seconds.
 - Screenshot download: < 10 seconds for 5 screenshots.
+- OCR: < 2 seconds per screenshot (Tesseract, CPU‑only).
 - Vault write: < 500ms per file.
 
 ### NFR2: Reliability
@@ -100,6 +110,10 @@ A homelab service that automatically archives screenshots and reading progress f
 2. The user has a Syncthing (or equivalent) sync set up between the homelab vault folder and Obsidian clients.
 3. The user has enabled "Send Document Metadata" in X4's KOReader Sync settings.
 4. The X4's File Transfer mode is used regularly enough that the 5‑10s poll catches it.
+5. The `tesseract-ocr` system binary is available in the deployment
+   environment (bundled in the Docker image); OCR accuracy on e‑ink
+   screenshots is best‑effort and depends on font rendering and whether
+   the page contains illustrations, not a guaranteed transcription.
 
 ## User Interface
 
@@ -109,7 +123,7 @@ A homelab service that automatically archives screenshots and reading progress f
 - "Completed" briefly after DONE.
 
 ### Status Page (FastAPI)
-- URL: `http://homelab.local:8080/status`
+- URL: `http://homelab.local:8081/status`
 - Shows: last sync time, books touched today, total screenshots, recent errors.
 
 ### Notifications
@@ -125,6 +139,7 @@ A homelab service that automatically archives screenshots and reading progress f
 | synced_at | TIMESTAMP | When it was synced |
 | book_title | TEXT | Book folder name |
 | sync_date | TEXT | Calendar day (YYYY-MM-DD) |
+| ocr_text | TEXT | Extracted text from Tesseract (nullable — empty if OCR skipped/failed) |
 | PRIMARY KEY | (device_path, content_hash) | |
 
 ### progress_updates (SQLite)
@@ -146,7 +161,7 @@ A homelab service that automatically archives screenshots and reading progress f
 vault/
   Commonplace/
     <Book Title>/
-      YYYY-MM-DD.md          # Daily note with screenshot embeds
+      YYYY-MM-DD.md          # Daily note: screenshot embeds + OCR text callouts
       attachments/
         YYYY-MM-DD-01.png    # Screenshots
         YYYY-MM-DD-02.png
@@ -162,8 +177,9 @@ vault/
 2. Device watcher (poll loop, log detection)
 3. WebSocket status display (manual test)
 4. Screenshot archiver (list, download, convert, write)
-5. State persistence (SQLite)
-6. KOReader sync server
-7. Vault writer integration (reading log, book timelines)
-8. Notifications
-9. Status page (FastAPI)
+5. OCR integration (pytesseract, embedded in daily notes, graceful fallback)
+6. State persistence (SQLite)
+7. KOReader sync server
+8. Vault writer integration (reading log, book timelines)
+9. Notifications
+10. Status page (FastAPI)

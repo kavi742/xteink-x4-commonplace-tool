@@ -1,0 +1,11 @@
+services:
+  xteink:
+    build: .
+    network_mode: host  # required for mDNS resolution of crosspoint.local
+    volumes:
+      - ./vault:/data/vault
+      - ./config:/data/config
+      - ./state:/data/state
+    environment:
+      - DEVICE_HOST=crosspoint.local
+    restart: unless-stopped

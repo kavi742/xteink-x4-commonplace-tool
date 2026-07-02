@@ -1,13 +1,17 @@
 # TODO
 
 ## Phase 1: Foundation
-- [ ] Create Obsidian vault folder structure:
-  - [ ] `Commonplace/` root
-  - [ ] `Reading Log/` directory
-  - [ ] `Books/` directory
+- [x] Create Obsidian vault folder structure:
+  - [x] `Commonplace/` root
+  - [x] `Reading Log/` directory
+  - [x] `Books/` directory
+  - via `scripts/init-vault.sh` — idempotent, run it whenever
 - [ ] Set up Syncthing between homelab and Obsidian clients
-- [ ] Configure Syncthing to ignore temporary files
-- [ ] **Create Docker setup (Dockerfile, docker-compose.yml)** ← PRIMARY DEPLOYMENT METHOD
+  - manual pairing step (Syncthing device IDs), can't be scripted from here
+- [x] Configure Syncthing to ignore temporary files
+  - `.stignore` written into the vault by `scripts/init-vault.sh`
+- [x] **Create Docker setup (Dockerfile, docker-compose.yml)** ← PRIMARY DEPLOYMENT METHOD
+  - untested against an actual Docker daemon — verify with `docker build .`
 
 ## Phase 2: Device Discovery
 - [ ] **Implement mDNS service discovery using python-zeroconf**
@@ -30,6 +34,15 @@
 - [ ] Test grouping by book folder and day (mtime)
 - [ ] Implement `_download_file()` using `/download`
 - [ ] Implement `_bmp_to_png()` conversion with Pillow
+- [ ] Add `pytesseract` (Python) + `tesseract-ocr` (system package) dependency
+- [ ] Implement `_ocr_image()` to extract text from each PNG via `pytesseract`
+- [ ] Embed OCR text under each screenshot embed as a collapsible callout
+      (`> [!quote]- OCR text`) so it's indexed by Obsidian search
+- [ ] Handle OCR failures gracefully — missing binary, blank/corrupt image —
+      log a warning and continue writing the image without text
+- [ ] Add `ocr_text` column to the `synced_screenshots` SQLite table
+- [ ] Test OCR accuracy against a handful of real X4 screenshots (mixed
+      fonts, illustrations) to gauge how reliable it actually is
 - [ ] Implement `VaultWriter.write_screenshot()` and `append_to_daily_note()`
 - [ ] Test end‑to‑end with 3‑5 screenshots
 
@@ -76,6 +89,9 @@
 - [ ] Add custom note templates (with frontmatter)
 - [ ] Export reading statistics to CSV/JSON
 - [ ] Add Obsidian Dataview queries for reading dashboard
+- [ ] Expose OCR text in a searchable index on the FastAPI status page
+      (beyond Obsidian's own search — optional, not required for the core
+      feature)
 
 ## Known Issues to Watch For
 
@@ -84,3 +100,5 @@
 - [ ] WebSocket connection may drop — need to handle reconnects
 - [ ] Book titles with special characters need sanitization for filenames
 - [ ] FAT filesystem timestamps may not be reliable — use current time as fallback
+- [ ] OCR accuracy varies with e‑ink font rendering and illustrations —
+      treat it as a best‑effort search aid, not an authoritative transcript

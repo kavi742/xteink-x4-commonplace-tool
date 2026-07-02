@@ -19,17 +19,26 @@ check() {
 }
 
 echo "== vault structure =="
+# Resolve init-vault.sh next to this script, not relative to the caller's
+# CWD — makes this work regardless of what directory you run it from.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+INIT_SCRIPT="$SCRIPT_DIR/init-vault.sh"
+if [ ! -f "$INIT_SCRIPT" ]; then
+  echo "  FAIL - init-vault.sh not found at $INIT_SCRIPT (expected next to this test script)"
+  FAIL=1
+else
 rm -rf "$VAULT_DIR"
-./scripts/init-vault.sh "$VAULT_DIR" > /dev/null
+"$INIT_SCRIPT" "$VAULT_DIR" > /dev/null
 check "Commonplace/ exists"   "[ -d '$VAULT_DIR/Commonplace' ]"
 check "Reading Log/ exists"   "[ -d '$VAULT_DIR/Reading Log' ]"
 check "Books/ exists"         "[ -d '$VAULT_DIR/Books' ]"
 check ".stignore exists"      "[ -f '$VAULT_DIR/.stignore' ]"
 check ".stignore ignores Obsidian workspace" "grep -q 'workspace' '$VAULT_DIR/.stignore'"
 # idempotency: running twice should not error or duplicate
-./scripts/init-vault.sh "$VAULT_DIR" > /dev/null
+"$INIT_SCRIPT" "$VAULT_DIR" > /dev/null
 check "init-vault.sh is idempotent (second run exits 0)" "[ $? -eq 0 ]"
 rm -rf "$VAULT_DIR"
+fi
 
 echo "== .gitignore =="
 check "vault/ is git-ignored"  "git check-ignore -q vault/dummy 2>/dev/null || git check-ignore -q vault"

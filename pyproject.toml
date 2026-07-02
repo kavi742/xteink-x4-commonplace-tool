@@ -1,0 +1,41 @@
+[project]
+name = "xteink-service"
+version = "0.1.0"
+description = "Homelab service: archives Xteink X4 screenshots (with OCR) and KOReader progress into an Obsidian vault"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = [
+    "aiohttp>=3.9",
+    "websockets>=12.0",
+    "pillow>=10.0",
+    "pytesseract>=0.3.10",
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "aiosqlite>=0.20",
+    "jinja2>=3.1",
+    "zeroconf>=0.132",
+    "pyyaml>=6.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.5",
+]
+
+# No source package exists yet — this keeps `uv sync`/`uv run` working
+# against just the dependency list without requiring an installable
+# xteink_service/ package on disk. Flip this to true (and add a
+# [build-system] + src layout) once the module in README's
+# `python -m xteink_service` actually exists.
+[tool.uv]
+package = false
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

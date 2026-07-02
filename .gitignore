@@ -1,0 +1,62 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+*.so
+
+# --- uv / venv ---
+.venv/
+venv/
+env/
+# uv.lock is intentionally NOT ignored — commit it so the homelab
+# deployment resolves the exact same dependency versions you dev against.
+
+# --- Testing / tooling caches ---
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+htmlcov/
+.coverage
+.coverage.*
+
+# --- Project runtime data (docker-compose volume mounts, not source) ---
+vault/
+config/
+state/
+*.db
+*.sqlite3
+*.log
+logs/
+
+# --- Secrets / local overrides ---
+.env
+.env.*
+*.local.yaml
+*.local.yml
+docker-compose.override.yml
+
+# --- Editors ---
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# --- macOS ---
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# --- Windows ---
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# --- Linux ---
+.directory

@@ -3,9 +3,12 @@ services:
     build: .
     network_mode: host  # required for mDNS resolution of crosspoint.local
     volumes:
-      - ./vault:/data/vault
-      - ./config:/data/config
-      - ./state:/data/state
+      - /srv/docker/data/syncthing/shares/xteink-vault:/data/vault
+      - /srv/docker/data/xteink-x4-commonplace/config:/data/config
+      - /srv/docker/data/xteink-x4-commonplace/state:/data/state
     environment:
       - DEVICE_HOST=crosspoint.local
+      - PUID=1000
+      - PGID=1000
+      - TZ=America/Toronto
     restart: unless-stopped

@@ -82,39 +82,26 @@ All services are independent but share state via a SQLite database.
 
 ### 1. Device Watcher & Screenshot Archiver
 
-**Approach: mDNS Service Discovery (Event-Driven)**
+**Approach: Polling**
 
-Instead of polling for the device, we use mDNS/Bonjour to detect when the X4 enters File Transfer mode. This is event-driven and more efficient than polling.
+Poll `http://crosspoint.local/api/status` every 5 seconds. When the device responds with HTTP 200, trigger the screenshot sync workflow.
 
-**How it works:**
-1. The CrossPoint firmware advertises an HTTP service via mDNS when in File Transfer mode
-2. We subscribe to mDNS service discovery events
-3. When the device appears, we get an immediate notification
-4. This triggers the screenshot sync workflow
-
-**Why mDNS instead of polling:**
-- No constant network traffic
-- Immediate detection when device comes online
-- More reliable across different network configurations
-- Industry-standard (used by Apple's ecosystem)
-
-**Implementation:** Use `python-zeroconf` library to listen for `_http._tcp.local.` services. When `crosspoint.local` is discovered, resolve its IP and connect.
-
-**Fallback:** If mDNS fails, fall back to polling `http://crosspoint.local/api/status` every 5‑10 seconds.
+**Fallback:** If `crosspoint.local` DNS fails, set `DEVICE_HOST` env var to the device's static IP.
 
 **On detection:**
 1. Connect WebSocket to `ws://crosspoint.local:81/`
 2. Send `START:Syncing screenshots...:1:/` — appears on X4 screen
 3. List `/screenshots/` via `/api/files?path=/screenshots`
-4. Group new files by (book, calendar day)
-5. For each file, show progress: `START:Screenshot 3 of 5:1:/`
-6. Download via `/download?path=...`
-7. Convert BMP → PNG using Pillow
-8. Write PNGs to `Commonplace/<Book>/attachments/`
-9. Write/append to `Commonplace/<Book>/YYYY-MM-DD.md`
-10. Mark synced in SQLite state table
-11. Show completion: `START:✅ Archived 5 screenshots from "Title":1:/`
-12. Send `DONE` and close WebSocket
+4. Group files by (book, calendar day of mtime)
+5. For each file, check sync state by path — skip download if already archived
+6. For new files, show progress: `START:Screenshot 3 of 5:1:/`
+7. Download via `/download?path=...` (URL-encoded)
+8. Convert BMP → PNG using Pillow
+9. Write PNGs to `Commonplace/<Book>/attachments/`
+10. Write/append to `Commonplace/<Book>/YYYY-MM-DD.md`
+11. Mark synced in SQLite state table
+12. Show completion; close WebSocket
+13. Wait for device to go offline before the poll loop restarts
 
 **State:** SQLite table `synced_screenshots` keyed by `(device_path, content_hash)`.
 
@@ -184,7 +171,7 @@ await ws.send(b"X")  # optional dummy data
 - "📖 Progress updated — Book Title → page 145"
 - "⚠️ Sync failed (attempt N)"
 
-**Status Page:** FastAPI + Jinja template:
+**Status Page:** FastAPI JSON endpoint (`/status`):
 - Last sync time
 - Books touched today
 - Total screenshots archived
@@ -206,15 +193,22 @@ Archiver → WebSocket ws://X4:81 → X4 screen shows "Uploading: message"
 
 ## Network Access Options
 
-| Access Method | Configuration | Best For |
-| :--- | :--- | :--- |
-| **mDNS Service Discovery** | Event-driven via `python-zeroconf` | Always-on home network, recommended for reliability |
-| **Local LAN** | `http://192.168.1.100:8081` | At home, simple setup |
-| **Docker (host mode)** | `http://localhost:8081` | Docker with `network_mode: host` |
-| **Nginx Proxy Manager** | `https://sync.yourdomain.com` | Secure remote access |
-| **Tailscale** | `http://100.x.x.x:8081` | Simple remote access, no public exposure |
+Two scenarios, two configs:
 
-**Note for HTTPS:** The X4 may need a community firmware fork (e.g., CrossPoint Reader ++) to handle TLS memory constraints when connecting to HTTPS servers.
+| Scenario | `DEVICE_HOST` | KOReader Sync URL on X4 |
+| :--- | :--- | :--- |
+| **At home (LAN)** | `crosspoint.local` | `http://homelab-ip:8081` |
+| **Away (phone hotspot + Tailscale)** | X4's Tailscale IP | `http://server-tailscale-ip:8081` |
+
+### Tailscale + Mobile Hotspot Setup
+
+1. Install Tailscale on the homelab server.
+2. Install the Tailscale Android app on the X4.
+3. Both devices join the same Tailnet.
+4. In `docker-compose.yml`, set `DEVICE_HOST` to the X4's Tailscale IP (`100.x.x.x`).
+5. In KOReader Sync settings on the X4, enter the server's Tailscale IP: `http://100.x.x.x:8081`.
+
+`network_mode: host` handles this automatically — the container shares the host's Tailscale interface with no extra configuration.
 
 ## Docker Deployment (Recommended)
 
@@ -223,7 +217,7 @@ Archiver → WebSocket ws://X4:81 → X4 screen shows "Uploading: message"
 services:
   xteink:
     build: .
-    network_mode: host  # Required for mDNS/crosspoint.local
+    network_mode: host  # required: resolves crosspoint.local (.local mDNS hostname needs host network)
     volumes:
       - ./vault:/data/vault
       - ./config:/data/config
@@ -234,7 +228,8 @@ services:
 ```
 
 **Key points:**
-- Use `network_mode: host` for mDNS resolution (`crosspoint.local`)
+- `network_mode: host` gives the container the host's Tailscale interface and mDNS resolver
+- Set `DEVICE_HOST=crosspoint.local` at home; `DEVICE_HOST=100.x.x.x` (X4's Tailscale IP) when away
 - Mount your Obsidian vault to `/data/vault`
 - State directory persists the SQLite database across restarts
 - Health check endpoint available at `http://localhost:8081/health`

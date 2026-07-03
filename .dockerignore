@@ -1,0 +1,9 @@
+*.md
+vault/
+state/
+config/
+test_scripts/
+.git/
+__pycache__/
+*.pyc
+.venv/

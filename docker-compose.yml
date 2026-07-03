@@ -1,12 +1,19 @@
 services:
   xteink:
     build: .
-    network_mode: host  # required for mDNS resolution of crosspoint.local
+    # network_mode: host shares the host's full network stack.
+    # Required for two reasons:
+    #   1. crosspoint.local hostname resolution (host's avahi-daemon)
+    #   2. Tailscale — container inherits the host's Tailscale interface,
+    #      so it can reach the X4 at its Tailscale IP when away from home.
+    network_mode: host
     volumes:
       - /srv/docker/data/syncthing/shares/xteink-vault:/data/vault
       - /srv/docker/data/xteink-x4-commonplace/config:/data/config
       - /srv/docker/data/xteink-x4-commonplace/state:/data/state
     environment:
+      # At home:      DEVICE_HOST=crosspoint.local  (default)
+      # Via Tailscale: DEVICE_HOST=100.x.x.x  (X4's Tailscale IP)
       - DEVICE_HOST=crosspoint.local
       - PUID=1000
       - PGID=1000

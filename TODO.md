@@ -14,20 +14,15 @@
   - untested against an actual Docker daemon — verify with `docker build .`
 
 ## Phase 2: Device Discovery
-- [ ] **Implement mDNS service discovery using python-zeroconf**
-  - [ ] Subscribe to `_http._tcp.local.` service type
-  - [ ] Handle `add_service` and `remove_service` events
-  - [ ] Resolve service to get IP address
-- [ ] Add fallback to polling `http://crosspoint.local/api/status`
+- [ ] Implement `poll_for_device()` — poll `http://crosspoint.local/api/status` every 5s
 - [ ] Log device detection events
 - [ ] Test with actual X4 in File Transfer mode
 
 ## Phase 3: On‑Device Status Display
 - [ ] Manually connect to `ws://crosspoint.local:81/`
 - [ ] Send `START:Test message:1:/` and verify it appears on X4 screen
-- [ ] Implement `XteinkStatus` class in Python
-- [ ] Test `connect()`, `show()`, `done()`, `close()`
-- [ ] Add graceful degradation if WebSocket fails
+- [ ] Implement `x4_status()` async context manager in Python
+- [ ] Test `show()` callable and graceful degradation
 
 ## Phase 4: Screenshot Archiving
 - [ ] Implement `_list_screenshots()` using `/api/files`
@@ -70,28 +65,15 @@
 ## Phase 8: Observability
 - [ ] Implement ntfy.sh notifications
 - [ ] Implement Home Assistant webhook notifications
-- [ ] Create FastAPI status page with Jinja template
+- [ ] Create FastAPI JSON status endpoint (`/status`)
 - [ ] Display: last sync time, books touched today, total screenshots, recent errors
 - [ ] Add logging throughout all components
 
 ## Phase 9: Integration & Polish
 - [ ] Wire all components together in `main.py`
-- [ ] Create configuration file (settings.yaml)
 - [ ] Document deployment steps (Docker-first)
 - [ ] Write unit tests for core modules
 - [ ] Test on actual homelab hardware
-
-## Phase 10: Optional Enhancements
-- [ ] Add support for Nginx Proxy Manager (HTTPS)
-- [ ] Add Tailscale integration guide
-- [ ] Support multiple X4 devices
-- [ ] Add "delete after sync" option (off by default)
-- [ ] Add custom note templates (with frontmatter)
-- [ ] Export reading statistics to CSV/JSON
-- [ ] Add Obsidian Dataview queries for reading dashboard
-- [ ] Expose OCR text in a searchable index on the FastAPI status page
-      (beyond Obsidian's own search — optional, not required for the core
-      feature)
 
 ## Known Issues to Watch For
 

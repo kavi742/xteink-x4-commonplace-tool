@@ -12,8 +12,8 @@ WORKDIR /app
 
 # Copy dependency files first so this layer caches independently of
 # source changes.
-COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen
+COPY pyproject.toml ./
+RUN uv sync
 
 COPY . .
 

@@ -4,7 +4,9 @@ FROM python:3.12-slim
 # (in pyproject.toml) only calls out to it, so it has to be installed here.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr \
-    && rm -rf /var/lib/apt/lists/*
+    libnss-mdns \
+    && rm -rf /var/lib/apt/lists/* \
+    && sed -i 's/^hosts:.*/hosts: files mdns4_minimal [NOTFOUND=return] dns/' /etc/nsswitch.conf
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 

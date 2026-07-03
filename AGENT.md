@@ -1,5 +1,14 @@
 # Agent Guidelines
 
+## Testing Convention
+
+**All tests run inside Docker.** Do not write instructions or test scripts that
+require a native Python environment. Every test command must be a `docker run`
+invocation. See [TESTING.md](TESTING.md) for the established pattern.
+
+- Unit tests: `docker run --rm xteink-service:dev python -m pytest ...`
+- Live device tests: `docker run --rm --network host xteink-service:dev ...`
+
 ## Use Ponytail for YAGNI
 
 This project uses the [Ponytail](https://github.com/DietrichGebert/ponytail) YAGNI plugin for LLM agents. 

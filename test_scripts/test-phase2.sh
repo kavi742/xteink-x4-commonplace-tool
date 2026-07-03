@@ -1,18 +1,19 @@
 #!/usr/bin/env bash
 # Phase 2 test: device discovery (poll_for_device + wait_for_offline)
-# Run from repo root: bash test_scripts/test-phase2.sh [host]
+# Run from anywhere: bash test_scripts/test-phase2.sh [host]
 # HOST defaults to crosspoint.local; pass an IP to bypass mDNS.
 
 set -uo pipefail
 FAIL=0
 HOST="${1:-crosspoint.local}"
 IMAGE="xteink-service:dev"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 pass() { echo "  ok   - $1"; }
 fail() { echo "  FAIL - $1"; FAIL=1; }
 
 echo "== build =="
-if docker build -t "$IMAGE" .; then
+if docker build -t "$IMAGE" "$REPO_ROOT"; then
   pass "image built ($IMAGE)"
 else
   fail "docker build failed"

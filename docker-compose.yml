@@ -14,8 +14,13 @@ services:
     environment:
       # At home:      DEVICE_HOST=crosspoint.local  (default)
       # Via Tailscale: DEVICE_HOST=100.x.x.x  (X4's Tailscale IP)
+      # Note: .local hostnames don't resolve inside the container.
+      # Use DEVICE_HOST=<static IP> or add to extra_hosts below.
       - DEVICE_HOST=crosspoint.local
       - PUID=1000
       - PGID=1000
       - TZ=America/Toronto
+    # Uncomment and set IP to resolve crosspoint.local inside the container:
+    # extra_hosts:
+    #   - "crosspoint.local:192.168.x.x"
     restart: unless-stopped

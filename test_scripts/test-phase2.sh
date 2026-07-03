@@ -12,6 +12,19 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 pass() { echo "  ok   - $1"; }
 fail() { echo "  FAIL - $1"; FAIL=1; }
 
+# Resolve hostname on the host (where avahi works) so the container
+# doesn't need its own mDNS stack.
+if [[ "$HOST" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  DEVICE_IP="$HOST"
+else
+  DEVICE_IP=$(avahi-resolve -n "$HOST" 2>/dev/null | awk '{print $2}')
+  if [ -z "$DEVICE_IP" ]; then
+    echo "  warn - could not resolve $HOST via avahi; using hostname directly"
+    DEVICE_IP="$HOST"
+  fi
+fi
+ADD_HOST="--add-host $HOST:$DEVICE_IP"
+
 echo "== build =="
 if docker build -t "$IMAGE" "$REPO_ROOT"; then
   pass "image built ($IMAGE)"
@@ -27,24 +40,18 @@ else
   fail "pytest"
 fi
 
-echo "== network (--network host) =="
-if docker run --rm --network host "$IMAGE" \
-    python -c "import socket; socket.gethostbyname('$HOST')"; then
-  pass "$HOST resolves inside container"
-else
-  fail "$HOST does not resolve (try: sudo apt install libnss-mdns, or pass IP as arg)"
-fi
-
-if docker run --rm --network host "$IMAGE" \
+echo "== network =="
+echo "  resolved $HOST → $DEVICE_IP"
+if docker run --rm --network host $ADD_HOST "$IMAGE" \
     python -c "import urllib.request; urllib.request.urlopen('http://$HOST/api/status', timeout=3)"; then
   pass "GET http://$HOST/api/status → 200"
 else
-  fail "GET http://$HOST/api/status failed (device reachable? File Transfer mode active?)"
+  fail "GET http://$HOST/api/status failed (device reachable? In Calibre Wireless mode?)"
 fi
 
 echo "== live watcher (15s timeout) =="
 echo "  polling $HOST — Ctrl-C to abort..."
-if timeout 15 docker run --init --rm --network host "$IMAGE" \
+if timeout 15 docker run --init --rm --network host $ADD_HOST "$IMAGE" \
     python xteink_service/watcher.py "$HOST"; then
   pass "X4 detected at $HOST"
 else

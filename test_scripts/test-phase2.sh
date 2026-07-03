@@ -12,10 +12,11 @@ pass() { echo "  ok   - $1"; }
 fail() { echo "  FAIL - $1"; FAIL=1; }
 
 echo "== build =="
-if docker build -t "$IMAGE" . > /dev/null 2>&1; then
+if docker build -t "$IMAGE" . > /tmp/xteink-build.log 2>&1; then
   pass "image built ($IMAGE)"
 else
-  fail "docker build failed"
+  fail "docker build failed — log:"
+  cat /tmp/xteink-build.log
   exit 1
 fi
 

@@ -42,40 +42,33 @@ Expected output:
 
 ## Phase 2 — Device Discovery
 
-### Automated: unit tests (in container)
-
 ```bash
-docker build -t xteink-service:dev .
-docker run --rm xteink-service:dev python -m pytest tests/test_watcher.py -v
+# Default hostname (crosspoint.local):
+bash test_scripts/test-phase2.sh
+
+# With a static IP (bypasses mDNS — useful if avahi isn't set up):
+bash test_scripts/test-phase2.sh 192.168.x.x
 ```
 
-Expected output:
+The script runs in order: build → unit tests → DNS resolution check →
+`GET /api/status` check → live watcher (15s timeout). Each step prints
+`ok` or `FAIL`. The live watcher step requires the X4 to be reachable.
 
+Expected output (device reachable and responding):
 ```
-tests/test_watcher.py::test_poll_returns_host_on_200 PASSED
-tests/test_watcher.py::test_wait_for_offline_returns_on_non_200 PASSED
-tests/test_watcher.py::test_wait_for_offline_returns_on_connection_error PASSED
-3 passed
-```
+== build ==
+  ok   - image built (xteink-service:dev)
+== unit tests ==
+  ok   - pytest (3 passed)
+== network (--network host) ==
+  ok   - crosspoint.local resolves inside container
+  ok   - GET http://crosspoint.local/api/status → 200
+== live watcher (15s timeout) ==
+  ok   - X4 detected at crosspoint.local
 
-### Live: device detection (in container, X4 required)
-
-**Requires:** X4 in File Transfer mode, on the same network or Tailscale.
-
-```bash
-# Default hostname:
-docker run --rm --network host xteink-service:dev \
-  python xteink_service/watcher.py
-
-# Tailscale (X4 on mobile hotspot):
-docker run --rm --network host xteink-service:dev \
-  python xteink_service/watcher.py 100.x.x.x
+Phase 2: all checks passed
 ```
 
-Expected output:
-```
-Watching for X4 at crosspoint.local (poll every 5s)...
-X4 online at crosspoint.local
-```
-
-**Pass criteria:** "X4 online" appears within ~10 seconds of pressing File Transfer.
+If `crosspoint.local` doesn't resolve inside the container, install
+`libnss-mdns` on the Debian host (`sudo apt install libnss-mdns`) or pass
+the X4's IP directly as the argument.

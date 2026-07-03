@@ -49,4 +49,7 @@ if __name__ == "__main__":
     import logging
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     _host = sys.argv[1] if len(sys.argv) > 1 else "crosspoint.local"
-    asyncio.run(poll_for_device(_host))
+    try:
+        asyncio.run(poll_for_device(_host))
+    except KeyboardInterrupt:
+        pass

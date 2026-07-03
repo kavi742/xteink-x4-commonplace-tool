@@ -43,8 +43,9 @@ else
 fi
 
 echo "== live watcher (15s timeout) =="
-if timeout 15 docker run --rm --network host "$IMAGE" \
-    python xteink_service/watcher.py "$HOST" 2>&1 | tee /dev/stderr | grep -q "X4 online"; then
+echo "  polling $HOST — Ctrl-C to abort..."
+if timeout 15 docker run --init --rm --network host "$IMAGE" \
+    python xteink_service/watcher.py "$HOST"; then
   pass "X4 detected at $HOST"
 else
   fail "X4 not detected within 15s"

@@ -41,3 +41,12 @@ async def wait_for_offline(host: str, interval: int = 5) -> None:
                 logger.info("X4 offline (unreachable)")
                 return
             await asyncio.sleep(interval)
+
+
+if __name__ == "__main__":
+    # Live test: python xteink_service/watcher.py [host]
+    import sys
+    import logging
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    _host = sys.argv[1] if len(sys.argv) > 1 else "crosspoint.local"
+    asyncio.run(poll_for_device(_host))

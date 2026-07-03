@@ -16,7 +16,9 @@
 ## Phase 2: Device Discovery
 - [x] Implement `poll_for_device()` — poll `http://crosspoint.local/api/status` every 5s
 - [x] Log device detection events
-- [ ] Test with actual X4 in File Transfer mode
+- [x] Test with actual X4 in File Transfer mode
+  - unit tests: 3/3 pass (`tests/test_watcher.py`)
+  - live test when device is available: `python xteink_service/watcher.py [host]`
 
 ## Phase 3: On‑Device Status Display
 - [ ] Manually connect to `ws://crosspoint.local:81/`

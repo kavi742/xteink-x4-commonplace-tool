@@ -18,6 +18,7 @@ bash test_scripts/test-phase1.sh
 ```
 
 Expected output:
+
 ```
 == vault structure ==
   ok   - Commonplace/ exists
@@ -63,6 +64,7 @@ python -m pytest tests/test_watcher.py -v
 ```
 
 Expected output:
+
 ```
 tests/test_watcher.py::test_poll_returns_host_on_200 PASSED
 tests/test_watcher.py::test_wait_for_offline_returns_on_non_200 PASSED
@@ -84,13 +86,12 @@ tests/test_watcher.py::test_wait_for_offline_returns_on_connection_error PASSED
    # Or with Tailscale IP:
    python xteink_service/watcher.py 100.x.x.x
    ```
-
 3. Expected log output:
+
    ```
    Watching for X4 at crosspoint.local (poll every 5s)...
    X4 online at crosspoint.local
    ```
-
 4. Exit File Transfer mode on the device; the process will have already returned
    (it exits as soon as the device responds). Re-run to verify `wait_for_offline`
    by pressing Ctrl-C after detection or letting it be called from `main.py` once
@@ -98,3 +99,30 @@ tests/test_watcher.py::test_wait_for_offline_returns_on_connection_error PASSED
 
 **Pass criteria:** the "X4 online" line appears within ~10 seconds of pressing
 File Transfer, and the correct hostname/IP is printed.
+
+### Live: device detection from inside the Docker container (Debian homelab server)
+
+**Requires:** Docker installed on the Debian server, X4 in File Transfer mode.
+
+`--network host` on Linux gives the container the host's full network stack —
+avahi-daemon for `crosspoint.local` resolution and the Tailscale interface if
+installed.
+
+```bash
+# Build the image
+docker build -t xteink-service:dev .
+
+# Run the watcher inside the container
+docker run --rm --network host xteink-service:dev \
+  python xteink_service/watcher.py
+
+# Or with a Tailscale IP (when X4 is on mobile hotspot):
+docker run --rm --network host xteink-service:dev \
+  python xteink_service/watcher.py 100.x.x.x
+```
+
+Expected output is identical to the local test:
+```
+Watching for X4 at crosspoint.local (poll every 5s)...
+X4 online at crosspoint.local
+```

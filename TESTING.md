@@ -37,11 +37,6 @@ Expected output:
   ok   - tesseract-ocr is installed in the image
 ```
 
-> **Known issue in the script:** the "all Python deps import" Docker check tests
-> `zeroconf`, `yaml`, and `jinja2` — all three were removed from `pyproject.toml`
-> in the ponytail audit. That one check will fail; everything else passes.
-> The script will be updated when Phase 9 (integration) is tested end-to-end.
-
 ### Live: none
 
 Phase 1 has no hardware dependency.

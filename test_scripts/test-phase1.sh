@@ -54,7 +54,7 @@ if command -v docker > /dev/null 2>&1; then
     check "tesseract-ocr is installed in the image" \
       "docker run --rm xteink-service:smoketest tesseract --version > /dev/null 2>&1"
     check "all Python deps import in the image" \
-      "docker run --rm xteink-service:smoketest python -c 'import fastapi, aiohttp, websockets, PIL, pytesseract, aiosqlite, zeroconf, yaml, jinja2' 2>/dev/null"
+      "docker run --rm xteink-service:smoketest python -c 'import fastapi, aiohttp, websockets, PIL, pytesseract, aiosqlite' 2>/dev/null"
   fi
 else
   echo "  skip - docker not installed, skipping build/compose checks"

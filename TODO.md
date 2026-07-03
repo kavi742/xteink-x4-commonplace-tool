@@ -14,8 +14,8 @@
   - untested against an actual Docker daemon — verify with `docker build .`
 
 ## Phase 2: Device Discovery
-- [ ] Implement `poll_for_device()` — poll `http://crosspoint.local/api/status` every 5s
-- [ ] Log device detection events
+- [x] Implement `poll_for_device()` — poll `http://crosspoint.local/api/status` every 5s
+- [x] Log device detection events
 - [ ] Test with actual X4 in File Transfer mode
 
 ## Phase 3: On‑Device Status Display

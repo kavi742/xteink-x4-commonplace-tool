@@ -3,8 +3,8 @@
 ## Project Structure
 
 ```
-xteink-service/
-├── src/
+xteink-x4-commonplace-tool/
+├── xteink_service/
 │   ├── __init__.py
 │   ├── main.py                 # Entry point, orchestrates all services
 │   ├── watcher.py              # Device poll loop
@@ -449,9 +449,9 @@ async def get_progress(doc_id: str = None):
 import asyncio
 import os
 import uvicorn
-from src.watcher import poll_for_device, wait_for_offline
-from src.archiver import ScreenshotArchiver
-from src.koreader_sync import app
+from xteink_service.watcher import poll_for_device, wait_for_offline
+from xteink_service.archiver import ScreenshotArchiver
+from xteink_service.koreader_sync import app
 
 async def main():
     host = os.getenv("DEVICE_HOST", "crosspoint.local")

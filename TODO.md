@@ -21,9 +21,9 @@
   - live test when device is available: `python xteink_service/watcher.py [host]`
 
 ## Phase 3: On‑Device Status Display
-- [ ] Manually connect to `ws://crosspoint.local:81/`
-- [ ] Send `START:Test message:1:/` and verify it appears on X4 screen
-- [ ] Implement `x4_status()` async context manager in Python
+- [x] Manually connect to `ws://crosspoint.local:81/`
+- [x] Send `START:Test message:1:/` and verify it appears on X4 screen
+- [x] Implement `x4_status()` async context manager in Python
 - [ ] Test `show()` callable and graceful degradation
 
 ## Phase 4: Screenshot Archiving

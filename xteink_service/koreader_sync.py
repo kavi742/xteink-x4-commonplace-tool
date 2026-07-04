@@ -85,7 +85,7 @@ class ProgressStore:
 
 
 _store = ProgressStore(
-    os.getenv("KOREADER_DB", os.getenv("STATE_DB", "/data/state/koreader.db"))
+    os.getenv("KOREADER_DB", "/tmp/koreader.db")
 )
 
 

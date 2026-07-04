@@ -69,10 +69,36 @@ write yet — that happens in Phase 7 once the DB is confirmed working).
 Minimal SQLite state so `run_sync()` skips already-archived screenshots.
 Full content backup (PNG blobs, OCR corrections) moves to Phase 9.
 
+### 6a — Screenshot dedup
 - [ ] Create `synced_screenshots` table (`device_path`, `content_hash`, `synced_at`, `book_title`, `sync_date`, `ocr_text`)
 - [ ] Implement `SyncState`: `is_path_synced()`, `is_synced()`, `mark_synced()`
 - [ ] Wire into `run_sync()` — skip download if path already in DB
 - [ ] Test idempotency (multiple runs must not duplicate rows or re-write vault files)
+
+### 6b — Document alias table (hash → title mapping)
+
+Links KOReader/CrossPoint progress hashes to human-readable book titles.
+The CrossPoint spec hash is not reliably reproducible (Calibre modifies epub files
+on re-transfer, changing the content hash). The KOReader Lua hash and filename MD5
+are also computed on first-open and cached by the firmware; downloaded files may differ.
+
+`document_aliases` schema:
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `hash` | TEXT PK | CrossPoint/KOReader document hash from `/syncs/progress` |
+| `title` | TEXT | Human-readable book title |
+| `filename` | TEXT | Epub filename on device |
+| `resolved_by` | TEXT | `"auto"` or `"manual"` |
+| `computed_at` | TIMESTAMP | |
+
+- [ ] Create `document_aliases` table
+- [ ] **Trigger**: only when a new book folder appears in `/screenshots/` that has no
+  alias yet — run `hash_books.py` against the device, compute both CrossPoint-spec
+  and KOReader-Lua hashes for every epub, store all (hash, filename) pairs
+- [ ] Match newly computed hashes against any unresolved progress hashes in
+  `progress_updates` — write matched rows with `resolved_by = "auto"`
+- [ ] Expose `PUT /api/aliases/{hash}` for manual title entry (Phase 9 web UI fallback)
 
 ## Phase 7: Vault Writer Integration
 

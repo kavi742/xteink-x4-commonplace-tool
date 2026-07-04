@@ -9,6 +9,7 @@ import pytesseract
 from PIL import Image, PngImagePlugin
 
 from xteink_service.status_display import x4_status
+from xteink_service.vault_writer import VaultWriter
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +22,7 @@ class ScreenshotArchiver:
         self.device_host = device_host
         # ponytail: state and vault wired in later phases
         self._state_db = state_db
+        self._vault = VaultWriter(vault_path)
 
     async def run_sync(self) -> None:
         """Sync all screenshots from the device, showing progress on its screen."""
@@ -53,10 +55,13 @@ class ScreenshotArchiver:
                     if ocr_text:
                         png_data = self._embed_ocr_in_png(png_data, ocr_text)
 
+                    # ponytail: state dedup wired in Phase 5
+                    embed = self._vault.write_screenshot(book, day, png_data, idx)
+                    self._vault.append_to_daily_note(book, day, embed, ocr_text)
+
                     book_counts[book] = book_counts.get(book, 0) + 1
 
-                    # ponytail: state dedup + vault write wired in Phase 5/7
-                    logger.info("Downloaded %s  ocr=%s", filepath,
+                    logger.info("Archived %s  ocr=%s", filepath,
                                 f"{len(ocr_text)} chars" if ocr_text else "empty")
 
                 # Summary — one line per book, then DONE

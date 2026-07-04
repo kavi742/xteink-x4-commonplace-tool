@@ -35,14 +35,15 @@
 - [x] Implement `_bmp_to_png()` conversion with Pillow
 - [x] Add `pytesseract` (Python) + `tesseract-ocr` (system package) dependency
 - [x] Implement `_ocr_image()` to extract text from each PNG via `pytesseract`
-- [ ] Embed OCR text under each screenshot embed as a collapsible callout
+- [x] Embed OCR text under each screenshot embed as a collapsible callout
       (`> [!quote]- OCR text`) so it's indexed by Obsidian search
 - [x] Handle OCR failures gracefully — missing binary, blank/corrupt image —
       log a warning and continue writing the image without text
 - [ ] Add `ocr_text` column to the `synced_screenshots` SQLite table
-- [ ] Test OCR accuracy against a handful of real X4 screenshots (mixed
+- [x] Test OCR accuracy against a handful of real X4 screenshots (mixed
       fonts, illustrations) to gauge how reliable it actually is
-- [ ] Implement `VaultWriter.write_screenshot()` and `append_to_daily_note()`
+      — confirmed good quality on Pastoral (e-ink text), see test_scripts/sample_ocr.txt
+- [x] Implement `VaultWriter.write_screenshot()` and `append_to_daily_note()`
 - [ ] Test end‑to‑end with 3‑5 screenshots
 
 ## Phase 5: State Management & Data Store

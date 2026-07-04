@@ -7,6 +7,8 @@ import aiohttp
 import pytesseract
 from PIL import Image
 
+from xteink_service.status_display import x4_status
+
 logger = logging.getLogger(__name__)
 
 
@@ -20,7 +22,34 @@ class ScreenshotArchiver:
         self._state_db = state_db
 
     async def run_sync(self) -> None:
-        raise NotImplementedError("Phase 4 in progress")
+        """Sync all screenshots from the device, showing progress on its screen."""
+        async with aiohttp.ClientSession() as session:
+            async with x4_status(self.device_host) as show:
+                await show("Syncing screenshots...")
+
+                screenshots = await self._list_screenshots(session)
+                if not screenshots:
+                    await show("No new screenshots")
+                    await asyncio.sleep(2)
+                    return
+
+                total = len(screenshots)
+                for idx, (book, day, filepath) in enumerate(screenshots, 1):
+                    await show(f"Screenshot {idx}/{total} \u2014 {book[:20]}")
+
+                    content = await self._download_file(session, filepath)
+                    png_data = self._bmp_to_png(content)
+                    ocr_text = self._ocr_image(png_data)
+
+                    # ponytail: state dedup + vault write wired in Phase 5/7
+                    logger.info(
+                        "Downloaded %s  ocr=%s",
+                        filepath,
+                        f"{len(ocr_text)} chars" if ocr_text else "empty",
+                    )
+
+                await show(f"\u2705 {total} screenshot(s) ready")
+                await asyncio.sleep(3)
 
     # ------------------------------------------------------------------ #
     # Data fetching                                                        #

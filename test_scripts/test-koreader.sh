@@ -24,6 +24,11 @@ cleanup() {
 trap cleanup EXIT
 
 echo "== build =="
+# Kill any stale xteink containers and pause the compose service so they
+# don't hold port 8090 between test runs.
+docker ps -q --filter "ancestor=$IMAGE" | xargs -r docker rm -f > /dev/null 2>&1
+docker compose -f "$REPO_ROOT/docker-compose.yml" stop xteink > /dev/null 2>&1 || true
+
 if docker build -t "$IMAGE" "$REPO_ROOT" > /dev/null 2>&1; then
   pass "image built"
 else

@@ -14,15 +14,16 @@ from xteink_service.archiver import ScreenshotArchiver
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
 
-async def main(host: str, vault: str) -> None:
-    archiver = ScreenshotArchiver(vault, host)
+async def main(host: str, vault: str, state_db: str) -> None:
+    archiver = ScreenshotArchiver(vault, host, state_db)
     await archiver.run_sync()
 
 
 if __name__ == "__main__":
     host = sys.argv[1] if len(sys.argv) > 1 else os.getenv("DEVICE_HOST", "crosspoint.local")
     vault = sys.argv[2] if len(sys.argv) > 2 else os.getenv("VAULT_PATH", "/data/vault")
+    state_db = sys.argv[3] if len(sys.argv) > 3 else os.getenv("STATE_DB", "/tmp/state.db")
     try:
-        asyncio.run(main(host, vault))
+        asyncio.run(main(host, vault, state_db))
     except KeyboardInterrupt:
         pass

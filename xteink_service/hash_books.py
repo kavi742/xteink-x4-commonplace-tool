@@ -9,6 +9,7 @@ Usage inside Docker:
 With known_hash arguments the script marks matches with MATCH.
 """
 import asyncio
+import hashlib
 import sys
 
 import aiohttp
@@ -68,10 +69,19 @@ async def main(host: str, known_hashes: set[str]) -> None:
                     params={"path": book["path"]},
                 ) as resp:
                     data = await resp.read()
-                h = compute(data)
-                match = "  <-- MATCH" if h in known_hashes else ""
-                print(f"    hash : {h}{match}")
-                print(f"    size : {len(data):,} bytes")
+                content_hash = compute(data)
+                filename = book["path"].split("/")[-1]
+                filename_hash = hashlib.md5(filename.encode()).hexdigest()
+                path_hash = hashlib.md5(book["path"].encode()).hexdigest()
+
+                for label, h in [
+                    ("content-hash", content_hash),
+                    ("filename-md5", filename_hash),
+                    ("path-md5   ", path_hash),
+                ]:
+                    match = "  <-- MATCH" if h in known_hashes else ""
+                    print(f"    {label}: {h}{match}")
+                print(f"    size      : {len(data):,} bytes")
             except Exception as e:
                 print(f"    error: {e}")
             print()

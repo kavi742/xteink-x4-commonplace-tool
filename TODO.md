@@ -60,8 +60,9 @@ write yet — that happens in Phase 7 once the DB is confirmed working).
 - [x] Verify progress data arrives correctly
   — X4 sends GET + PUT on sync; both return 200; doc IDs are binary hashes
   — No "Send Document Metadata" option in CrossPoint firmware; title/author always empty
-  — For Phase 7: cross-reference doc hash against screenshot book folders to resolve name,
-    or store hash as-is and let the web UI (Phase 9) provide a manual mapping
+  — Hash algorithm confirmed from firmware source (partial MD5, 12 offsets starting at 0)
+  — Auto-resolution works on unmodified epubs; existing books with Calibre-modified files
+    need manual mapping in Phase 9 web UI (hash → title entry field)
 
 ## Phase 6: State Management (dedup)
 

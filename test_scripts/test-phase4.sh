@@ -36,11 +36,17 @@ else
   # Resolve hostname on the host so the container can reach it.
   if [[ "$HOST" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
     DEVICE_IP="$HOST"
+    ADD_HOST=""
   else
     DEVICE_IP=$(avahi-resolve -n "$HOST" 2>/dev/null | awk '{print $2}')
-    [ -z "$DEVICE_IP" ] && DEVICE_IP="$HOST"
+    if [ -z "$DEVICE_IP" ]; then
+      echo "  warn - avahi could not resolve $HOST; using hostname directly via --network host"
+      DEVICE_IP="$HOST"
+      ADD_HOST=""
+    else
+      ADD_HOST="--add-host $HOST:$DEVICE_IP"
+    fi
   fi
-  ADD_HOST="--add-host $HOST:$DEVICE_IP"
 
   echo "== live OCR test (device: $HOST → $DEVICE_IP) =="
   echo "  Fetching first available screenshot and running Tesseract..."

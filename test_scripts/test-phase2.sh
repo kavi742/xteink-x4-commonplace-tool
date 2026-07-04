@@ -16,14 +16,17 @@ fail() { echo "  FAIL - $1"; FAIL=1; }
 # doesn't need its own mDNS stack.
 if [[ "$HOST" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   DEVICE_IP="$HOST"
+  ADD_HOST=""
 else
   DEVICE_IP=$(avahi-resolve -n "$HOST" 2>/dev/null | awk '{print $2}')
   if [ -z "$DEVICE_IP" ]; then
-    echo "  warn - could not resolve $HOST via avahi; using hostname directly"
+    echo "  warn - avahi could not resolve $HOST; using hostname directly via --network host"
     DEVICE_IP="$HOST"
+    ADD_HOST=""
+  else
+    ADD_HOST="--add-host $HOST:$DEVICE_IP"
   fi
 fi
-ADD_HOST="--add-host $HOST:$DEVICE_IP"
 
 echo "== build =="
 if docker build -t "$IMAGE" "$REPO_ROOT"; then

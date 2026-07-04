@@ -52,12 +52,13 @@
 Receives reading progress from the X4. Data goes straight into SQLite (no vault
 write yet — that happens in Phase 7 once the DB is confirmed working).
 
-- [ ] Implement minimal `POST /syncs/progress` endpoint
-- [ ] Implement `GET /syncs/progress` endpoint
-- [ ] Create SQLite `progress_updates` table
-- [ ] Test with X4 KOReader Sync settings pointing to local server
-- [ ] Enable "Send Document Metadata" on X4
-- [ ] Verify progress data arrives correctly
+- [x] Implement minimal `POST /syncs/progress` endpoint
+- [x] Implement `GET /syncs/progress` endpoint
+- [x] Create SQLite `progress_updates` table
+- [x] Test with X4 KOReader Sync settings pointing to local server
+- [x] Enable "Send Document Metadata" on X4
+- [x] Verify progress data arrives correctly
+  — X4 sends GET + PUT on sync; both return 200; doc IDs are binary hashes
 
 ## Phase 6: State Management (dedup)
 

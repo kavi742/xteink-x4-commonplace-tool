@@ -164,7 +164,32 @@ await ws.send(b"X")  # optional dummy data
 # Screen updates automatically
 ```
 
-### 4. Observability Layer
+### 4. Data Store & Web UI
+
+**Purpose:** SQLite is the primary source of truth. The Obsidian vault is
+derived from it and can be fully rebuilt via `POST /api/vault/export` if sync
+conflicts corrupt the markdown files.
+
+**`synced_screenshots` table** stores everything needed for recovery:
+- `png_data BLOB` — full PNG bytes (self-contained, no vault dependency)
+- `ocr_text TEXT` — raw Tesseract output
+- `ocr_corrected TEXT` — user-edited correction
+- `user_notes TEXT` — free-form annotations
+
+**`progress_updates` table** stores all KOReader sync events (unchanged).
+
+**CRUD API** (FastAPI, same process as KOReader sync server):
+- `GET /api/books` — book list with counts
+- `GET /api/books/{book}/screenshots` — screenshot metadata (no blob)
+- `GET /api/screenshots/{id}/image` — serve PNG from DB
+- `PUT /api/screenshots/{id}` — edit OCR correction / notes
+- `GET /api/reading-log` — reading progress history
+- `POST /api/vault/export` — rebuild all vault markdown from DB
+
+**Web frontend** — single HTML file at `/app`, served by FastAPI. Vanilla JS
+(`fetch()`), no build step, no framework.
+
+### 5. Observability Layer
 
 **Notifications:** ntfy.sh or Home Assistant webhook:
 - "📎 Archived N screenshots — Book Title"
@@ -177,6 +202,7 @@ await ws.send(b"X")  # optional dummy data
 - Total screenshots archived
 - Recent KOReader sync updates
 - Last error (if any)
+
 
 ## Data Flow
 

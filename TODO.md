@@ -31,8 +31,8 @@
 ## Phase 4: Screenshot Archiving
 - [x] Implement `_list_screenshots()` using `/api/files`
 - [x] Test grouping by book folder and day (mtime)
-- [ ] Implement `_download_file()` using `/download`
-- [ ] Implement `_bmp_to_png()` conversion with Pillow
+- [x] Implement `_download_file()` using `/download`
+- [x] Implement `_bmp_to_png()` conversion with Pillow
 - [ ] Add `pytesseract` (Python) + `tesseract-ocr` (system package) dependency
 - [ ] Implement `_ocr_image()` to extract text from each PNG via `pytesseract`
 - [ ] Embed OCR text under each screenshot embed as a collapsible callout

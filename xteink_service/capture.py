@@ -57,7 +57,7 @@ async def main(host: str) -> None:
             print("            (OCR text also embedded in PNG iTXt metadata)")
 
         await show(f"1 from {book[:12]}  DONE")
-        await asyncio.sleep(30)
+        await asyncio.sleep(5)  # brief hold so message is visible; production sync uses 30s
 
     print("\n--- OCR output ---")
     print(text if text else "(empty — blank page or no recognisable text)")

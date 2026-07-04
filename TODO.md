@@ -24,7 +24,9 @@
 - [x] Manually connect to `ws://crosspoint.local:81/`
 - [x] Send `START:Test message:1:/` and verify it appears on X4 screen
 - [x] Implement `x4_status()` async context manager in Python
-- [ ] Test `show()` callable and graceful degradation
+- [x] Test `show()` callable and graceful degradation
+  - unit tests: 3/3 pass (`tests/test_status_display.py`)
+  - live test: `bash test_scripts/test-phase3.sh`
 
 ## Phase 4: Screenshot Archiving
 - [ ] Implement `_list_screenshots()` using `/api/files`

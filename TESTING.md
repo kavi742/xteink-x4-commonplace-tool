@@ -59,9 +59,9 @@ Expected output (device reachable and responding):
 == build ==
   ok   - image built (xteink-service:dev)
 == unit tests ==
-  ok   - pytest (3 passed)
-== network (--network host) ==
-  ok   - crosspoint.local resolves inside container
+  ok   - pytest
+== network ==
+  resolved crosspoint.local → 192.168.x.x
   ok   - GET http://crosspoint.local/api/status → 200
 == live watcher (15s timeout) ==
   ok   - X4 detected at crosspoint.local
@@ -69,6 +69,39 @@ Expected output (device reachable and responding):
 Phase 2: all checks passed
 ```
 
-If `crosspoint.local` doesn't resolve inside the container, install
-`libnss-mdns` on the Debian host (`sudo apt install libnss-mdns`) or pass
-the X4's IP directly as the argument.
+Hostname resolution uses avahi on the host and injects the IP into the container
+via `--add-host`, so in-container mDNS is not required.
+
+---
+
+## Phase 3 — On-Device Status Display
+
+```bash
+# Default hostname and message:
+bash test_scripts/test-phase3.sh
+
+# Custom host or message:
+bash test_scripts/test-phase3.sh crosspoint.local "Syncing screenshots..."
+```
+
+Runs in order: build → unit tests → graceful degradation check (no device needed)
+→ live message send (device must be in Calibre Wireless mode).
+
+Expected output:
+```
+== build ==
+  ok   - image built (xteink-service:dev)
+== unit tests ==
+  ok   - pytest
+== graceful degradation ==
+  ok   - exits 0 when WebSocket connection is refused
+== live: send message to X4 screen (device required) ==
+  sending: Hello from xteink-service
+  resolved crosspoint.local → 192.168.x.x
+  ok   - message sent — verify it appeared on X4 screen
+
+Phase 3: all checks passed
+```
+
+**Pass criteria:** the message text appears in the Calibre Wireless status area on
+the X4 screen for ~5 seconds.

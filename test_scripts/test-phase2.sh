@@ -18,9 +18,9 @@ if [[ "$HOST" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   DEVICE_IP="$HOST"
   ADD_HOST=""
 else
-  DEVICE_IP=$(avahi-resolve -n "$HOST" 2>/dev/null | awk '{print $2}')
+  DEVICE_IP=$(getent hosts "$HOST" 2>/dev/null | awk '{print $1}')
   if [ -z "$DEVICE_IP" ]; then
-    echo "  warn - avahi could not resolve $HOST; using hostname directly via --network host"
+    echo "  warn - could not resolve $HOST; using hostname directly via --network host"
     DEVICE_IP="$HOST"
     ADD_HOST=""
   else

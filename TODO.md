@@ -33,11 +33,11 @@
 - [x] Test grouping by book folder and day (mtime)
 - [x] Implement `_download_file()` using `/download`
 - [x] Implement `_bmp_to_png()` conversion with Pillow
-- [ ] Add `pytesseract` (Python) + `tesseract-ocr` (system package) dependency
-- [ ] Implement `_ocr_image()` to extract text from each PNG via `pytesseract`
+- [x] Add `pytesseract` (Python) + `tesseract-ocr` (system package) dependency
+- [x] Implement `_ocr_image()` to extract text from each PNG via `pytesseract`
 - [ ] Embed OCR text under each screenshot embed as a collapsible callout
       (`> [!quote]- OCR text`) so it's indexed by Obsidian search
-- [ ] Handle OCR failures gracefully — missing binary, blank/corrupt image —
+- [x] Handle OCR failures gracefully — missing binary, blank/corrupt image —
       log a warning and continue writing the image without text
 - [ ] Add `ocr_text` column to the `synced_screenshots` SQLite table
 - [ ] Test OCR accuracy against a handful of real X4 screenshots (mixed

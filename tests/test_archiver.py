@@ -1,5 +1,5 @@
 from datetime import datetime
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 import io
 
 from PIL import Image
@@ -141,3 +141,34 @@ def test_bmp_to_png_preserves_dimensions():
 
     img = Image.open(io.BytesIO(png))
     assert img.size == (4, 8)
+
+
+# ------------------------------------------------------------------ #
+# _ocr_image                                                          #
+# ------------------------------------------------------------------ #
+
+def test_ocr_image_returns_extracted_text():
+    """_ocr_image returns the stripped string from pytesseract."""
+    png = ScreenshotArchiver._bmp_to_png(_make_bmp())
+    with patch("xteink_service.archiver.pytesseract.image_to_string",
+               return_value="  Hello world  "):
+        result = ScreenshotArchiver._ocr_image(png)
+    assert result == "Hello world"
+
+
+def test_ocr_image_returns_none_on_empty_output():
+    """Blank OCR output (whitespace only) returns None."""
+    png = ScreenshotArchiver._bmp_to_png(_make_bmp())
+    with patch("xteink_service.archiver.pytesseract.image_to_string",
+               return_value="   "):
+        result = ScreenshotArchiver._ocr_image(png)
+    assert result is None
+
+
+def test_ocr_image_returns_none_on_tesseract_error():
+    """If Tesseract raises, _ocr_image returns None without crashing."""
+    png = ScreenshotArchiver._bmp_to_png(_make_bmp())
+    with patch("xteink_service.archiver.pytesseract.image_to_string",
+               side_effect=Exception("tesseract not found")):
+        result = ScreenshotArchiver._ocr_image(png)
+    assert result is None

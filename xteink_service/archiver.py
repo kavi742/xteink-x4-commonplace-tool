@@ -4,6 +4,7 @@ import logging
 from datetime import datetime
 
 import aiohttp
+import pytesseract
 from PIL import Image
 
 logger = logging.getLogger(__name__)
@@ -68,3 +69,18 @@ class ScreenshotArchiver:
         out = io.BytesIO()
         img.save(out, format="PNG")
         return out.getvalue()
+
+    @staticmethod
+    def _ocr_image(png_data: bytes) -> str | None:
+        """
+        Extract text from a PNG via Tesseract.
+        Returns None (and logs a warning) if Tesseract is unavailable or fails.
+        Empty output after stripping is also treated as None.
+        """
+        try:
+            img = Image.open(io.BytesIO(png_data))
+            text = pytesseract.image_to_string(img).strip()
+            return text or None
+        except Exception as exc:
+            logger.warning("OCR failed, skipping text extraction: %s", exc)
+            return None

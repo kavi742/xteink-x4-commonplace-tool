@@ -141,20 +141,3 @@ def test_bmp_to_png_preserves_dimensions():
 
     img = Image.open(io.BytesIO(png))
     assert img.size == (4, 8)
-
-
-    session = MagicMock()
-    session.get = MagicMock(side_effect=[
-        _resp([
-            {"name": "BookA", "isDirectory": True},
-            {"name": "BookB", "isDirectory": True},
-        ]),
-        _resp([{"name": "a.bmp", "isDirectory": False, "mtime": 1751500800}]),
-        _resp([{"name": "b.bmp", "isDirectory": False, "mtime": 1751500800},
-               {"name": "c.bmp", "isDirectory": False, "mtime": 1751500800}]),
-    ])
-
-    results = await archiver._list_screenshots(session)
-
-    assert len(results) == 3
-    assert {r[0] for r in results} == {"BookA", "BookB"}

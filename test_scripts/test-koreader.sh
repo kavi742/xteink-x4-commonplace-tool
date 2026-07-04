@@ -103,6 +103,7 @@ if $LIVE; then
 
   # Stop the automated-test container so its port is free
   [ -n "$CONTAINER" ] && docker rm -f "$CONTAINER" > /dev/null 2>&1 && CONTAINER=""
+  sleep 2  # let the kernel release the port
 
   SERVER_IP=$(hostname -I | awk '{print $1}')
 
@@ -110,7 +111,13 @@ if $LIVE; then
     -p "$PORT:$PORT" \
     "$IMAGE" \
     python -m uvicorn xteink_service.koreader_sync:app \
-      --host 0.0.0.0 --port "$PORT" --log-level warning)
+      --host 0.0.0.0 --port "$PORT" --log-level warning 2>&1)
+
+  # Check container actually started (not just a docker error message)
+  if ! docker inspect "$LIVE_CONTAINER" > /dev/null 2>&1; then
+    fail "live server docker run failed: $LIVE_CONTAINER"
+    exit "$FAIL"
+  fi
 
   LIVE_READY=false
   for i in $(seq 1 10); do

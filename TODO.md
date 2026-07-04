@@ -59,6 +59,9 @@ write yet — that happens in Phase 7 once the DB is confirmed working).
 - [x] Enable "Send Document Metadata" on X4
 - [x] Verify progress data arrives correctly
   — X4 sends GET + PUT on sync; both return 200; doc IDs are binary hashes
+  — No "Send Document Metadata" option in CrossPoint firmware; title/author always empty
+  — For Phase 7: cross-reference doc hash against screenshot book folders to resolve name,
+    or store hash as-is and let the web UI (Phase 9) provide a manual mapping
 
 ## Phase 6: State Management (dedup)
 

@@ -18,12 +18,21 @@ async def x4_status(host: str):
         ws = await websockets.connect(f"ws://{host}:81/")
         logger.debug("WebSocket connected to %s:81", host)
 
-        async def show(message: str) -> None:
+        async def show(message: str, data: bytes | None = None) -> None:
             try:
-                await ws.send(f"START:{message}:1:/")
-                if await ws.recv() == "READY":
-                    await ws.send(b"X")
-                    await ws.recv()  # drain DONE / PROGRESS:1:1
+                if data is not None:
+                    # Genuine progress bar — stream actual bytes
+                    await ws.send(f"START:{message}:{len(data)}:/")
+                    if await ws.recv() != "READY":
+                        return
+                    chunk = 4096
+                    for i in range(0, len(data), chunk):
+                        await ws.send(data[i : i + chunk])
+                    await ws.recv()  # DONE
+                else:
+                    # Text-only status message, no progress bar
+                    await ws.send(f"START:{message}:0:/")
+                    await ws.recv()  # DONE
             except Exception:
                 pass
 
@@ -31,7 +40,7 @@ async def x4_status(host: str):
     except Exception as e:
         logger.warning("Could not connect to X4 status display: %s", e)
 
-        async def _noop(_: str) -> None:
+        async def _noop(_: str, __: bytes | None = None) -> None:
             pass
 
         yield _noop

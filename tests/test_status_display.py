@@ -4,9 +4,9 @@ from xteink_service.status_display import x4_status
 
 
 async def test_show_sends_correct_protocol():
-    """show() sends START, waits for READY, sends dummy byte, drains response."""
+    """show() with no data sends START:msg:0, reads DONE (text-only, no bar)."""
     ws = AsyncMock()
-    ws.recv = AsyncMock(side_effect=["READY", "DONE"])
+    ws.recv = AsyncMock(return_value="DONE")
 
     with patch(
         "xteink_service.status_display.websockets.connect",
@@ -15,8 +15,24 @@ async def test_show_sends_correct_protocol():
         async with x4_status("test.local") as show:
             await show("Hello")
 
-    ws.send.assert_any_call("START:Hello:1:/")
-    ws.send.assert_any_call(b"X")
+    ws.send.assert_called_once_with("START:Hello:0:/")
+    ws.close.assert_called_once()
+
+
+async def test_show_with_data_streams_bytes_and_fills_bar():
+    """show(msg, data=b'...') sends actual bytes so the progress bar fills correctly."""
+    ws = AsyncMock()
+    ws.recv = AsyncMock(side_effect=["READY", "DONE"])
+
+    with patch(
+        "xteink_service.status_display.websockets.connect",
+        new=AsyncMock(return_value=ws),
+    ):
+        async with x4_status("test.local") as show:
+            await show("Transferring", data=b"BMPDATA")
+
+    ws.send.assert_any_call("START:Transferring:7:/")
+    ws.send.assert_any_call(b"BMPDATA")
     ws.close.assert_called_once()
 
 

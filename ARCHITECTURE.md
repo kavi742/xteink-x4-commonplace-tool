@@ -158,10 +158,9 @@ Server → DONE / ERROR
 **Usage:**
 ```python
 ws = await websockets.connect("ws://crosspoint.local:81/")
-await ws.send("START:Screenshot 3 of 5:1:/")
-await ws.recv()  # READY
-await ws.send(b"X")  # optional dummy data
-# Screen updates automatically
+await ws.send("START:Screenshot 3 of 5:0:/")
+await ws.recv()  # DONE (size=0 — no progress bar, message only)
+# Screen shows the message text; no progress bar
 ```
 
 ### 4. Data Store & Web UI

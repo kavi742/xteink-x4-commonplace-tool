@@ -51,13 +51,15 @@ class ScreenshotArchiver:
                         continue
 
                     label = self._status_label(book, filepath, idx, total)
-                    await show(label)
 
                     content = await self._download_file(session, filepath)
                     content_hash = hashlib.sha256(content).hexdigest()
 
                     if self._state.is_synced(filepath, content_hash):
                         continue
+
+                    # Stream bytes through the status WebSocket — fills progress bar accurately
+                    await show(label, data=content)
 
                     png_data = self._bmp_to_png(content)
                     ocr_text = self._ocr_image(png_data)

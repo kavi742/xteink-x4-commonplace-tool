@@ -50,7 +50,7 @@ class ScreenshotArchiver:
                         f"{len(ocr_text)} chars" if ocr_text else "empty",
                     )
 
-                await show(f"\u2705 {total} screenshot(s) ready")
+                await show(f"Done -- {total} screenshot(s) ready")
                 await asyncio.sleep(3)
 
     # ------------------------------------------------------------------ #

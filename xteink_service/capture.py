@@ -50,7 +50,7 @@ async def main(host: str) -> None:
         if ocr_text:
             print("            (OCR text also embedded in PNG iTXt metadata)")
 
-        await show("\u2705 Capture done")
+        await show("Capture done")
         await asyncio.sleep(3)
 
     print("\n--- OCR output ---")

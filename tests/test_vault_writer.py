@@ -62,7 +62,7 @@ def test_append_adds_collapsible_ocr_callout(tmp_path):
         ocr_text="Hello\nworld"
     )
     content = (tmp_path / "Books" / "Pastoral.md").read_text()
-    assert "> [!quote]- OCR text" in content
+    assert "> [!quote] OCR text" in content
     assert "> Hello" in content
     assert "> world" in content
 
@@ -80,3 +80,57 @@ def test_append_accumulates_multiple_screenshots_under_same_heading(tmp_path):
     assert "img1.png" in content
     assert "img2.png" in content
     assert content.count("## 2026-07-03") == 1  # heading appears only once
+
+
+# ------------------------------------------------------------------ #
+# Reading log + book timeline                                          #
+# ------------------------------------------------------------------ #
+
+def test_write_reading_log(tmp_path):
+    vw = VaultWriter(str(tmp_path))
+    vw.write_reading_log(date(2026, 7, 4), "Pastoral", 45.3)
+    content = (tmp_path / "Reading Log" / "2026-07-04.md").read_text()
+    assert "Pastoral" in content
+    assert "45.3%" in content
+
+
+def test_write_reading_log_cross_day_range(tmp_path):
+    vw = VaultWriter(str(tmp_path))
+    vw.write_reading_log(
+        date(2026, 7, 4), "Pastoral", 45.3,
+        prev_percentage=22.1, prev_day=date(2026, 7, 3)
+    )
+    content = (tmp_path / "Reading Log" / "2026-07-04.md").read_text()
+    assert "22.1%" in content
+    assert "45.3%" in content
+    assert "→" in content
+
+
+def test_write_reading_log_same_day_replaces(tmp_path):
+    vw = VaultWriter(str(tmp_path))
+    vw.write_reading_log(date(2026, 7, 4), "Pastoral", 22.1)
+    vw.write_reading_log(date(2026, 7, 4), "Pastoral", 45.3)
+    content = (tmp_path / "Reading Log" / "2026-07-04.md").read_text()
+    assert content.count("Pastoral") == 1
+    assert "45.3%" in content
+    assert "22.1%" not in content
+
+
+def test_update_book_timeline_same_day_replaces(tmp_path):
+    import re
+    vw = VaultWriter(str(tmp_path))
+    vw.update_book_timeline("Pastoral", "", date(2026, 7, 4), 22.1)
+    vw.update_book_timeline("Pastoral", "", date(2026, 7, 4), 45.3, first_today_pct=22.1)
+    content = (tmp_path / "Books" / "Pastoral.md").read_text()
+    assert content.count("## 2026-07-04") == 1
+    assert "22.1%" in content  # start of range
+    assert "45.3%" in content
+    assert len(re.findall(r'^- [\d]', content, re.MULTILINE)) == 1
+
+
+def test_update_book_timeline_with_cfi(tmp_path):
+    vw = VaultWriter(str(tmp_path))
+    vw.update_book_timeline("Pastoral", "", date(2026, 7, 4), 45.3,
+                            progress="/body/DocFragment[12]/body")
+    content = (tmp_path / "Books" / "Pastoral.md").read_text()
+    assert "§12" in content

@@ -17,6 +17,17 @@ import aiohttp
 from xteink_service.document_id import compute
 
 
+def _koreader_lua_hash(data: bytes) -> str:
+    """KOReader Lua util.getFileHashPart — pos=0, step=4096, step*=4 each iteration."""
+    m = hashlib.md5()
+    pos, step = 0, 4096
+    while pos < len(data):
+        m.update(data[pos : pos + 1024])
+        pos += step
+        step *= 4
+    return m.hexdigest()
+
+
 async def list_books(session: aiohttp.ClientSession, host: str) -> list[dict]:
     """Return all EPUB/PDF file entries found anywhere under / on the device."""
     books: list[dict] = []
@@ -70,18 +81,20 @@ async def main(host: str, known_hashes: set[str]) -> None:
                 ) as resp:
                     data = await resp.read()
                 content_hash = compute(data)
+                lua_hash = _koreader_lua_hash(data)
                 filename = book["path"].split("/")[-1]
                 filename_hash = hashlib.md5(filename.encode()).hexdigest()
                 path_hash = hashlib.md5(book["path"].encode()).hexdigest()
 
                 for label, h in [
-                    ("content-hash", content_hash),
-                    ("filename-md5", filename_hash),
-                    ("path-md5   ", path_hash),
+                    ("content-hash (CrossPoint spec)", content_hash),
+                    ("content-hash (KOReader Lua)   ", lua_hash),
+                    ("filename-md5                  ", filename_hash),
+                    ("path-md5                      ", path_hash),
                 ]:
                     match = "  <-- MATCH" if h in known_hashes else ""
                     print(f"    {label}: {h}{match}")
-                print(f"    size      : {len(data):,} bytes")
+                print(f"    size                          : {len(data):,} bytes")
             except Exception as e:
                 print(f"    error: {e}")
             print()

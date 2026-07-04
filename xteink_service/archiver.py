@@ -67,6 +67,9 @@ class ScreenshotArchiver:
                         png_data = self._embed_ocr_in_png(png_data, ocr_text)
 
                     embed = self._vault.write_screenshot(book, day, png_data, idx)
+                    self._vault.write_screenshot_meta(
+                        embed, filepath, content_hash, book, day.isoformat(), ocr_text
+                    )
                     self._vault.append_to_daily_note(book, day, embed, ocr_text)
                     self._state.mark_synced(
                         filepath, content_hash, book, day.isoformat(), ocr_text

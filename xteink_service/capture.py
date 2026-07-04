@@ -14,8 +14,10 @@ from xteink_service.status_display import x4_status
 
 async def main(host: str) -> None:
     a = ScreenshotArchiver("/vault", host)
+    timeout = aiohttp.ClientTimeout(total=10)
 
-    async with aiohttp.ClientSession() as s:
+    print(f"Connecting to {host}...")
+    async with aiohttp.ClientSession(timeout=timeout) as s:
         shots = await a._list_screenshots(s)
 
     if not shots:
@@ -30,7 +32,7 @@ async def main(host: str) -> None:
         label = a._status_label(book, path, 1, 1)
         await show(label)
 
-        async with aiohttp.ClientSession() as s:
+        async with aiohttp.ClientSession(timeout=timeout) as s:
             bmp = await a._download_file(s, path)
 
         png = a._bmp_to_png(bmp)

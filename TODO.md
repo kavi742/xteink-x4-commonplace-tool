@@ -29,8 +29,8 @@
   - live test: `bash test_scripts/test-phase3.sh`
 
 ## Phase 4: Screenshot Archiving
-- [ ] Implement `_list_screenshots()` using `/api/files`
-- [ ] Test grouping by book folder and day (mtime)
+- [x] Implement `_list_screenshots()` using `/api/files`
+- [x] Test grouping by book folder and day (mtime)
 - [ ] Implement `_download_file()` using `/download`
 - [ ] Implement `_bmp_to_png()` conversion with Pillow
 - [ ] Add `pytesseract` (Python) + `tesseract-ocr` (system package) dependency

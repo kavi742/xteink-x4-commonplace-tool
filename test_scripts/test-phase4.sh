@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Phase 4 test: screenshot archiver (list, download, BMP→PNG conversion, OCR)
+# Phase 4 test: screenshot archiver + vault writer
 # Run from anywhere: bash test_scripts/test-phase4.sh [host]
-# Pass host to enable live OCR test (device must be in File Transfer mode).
+# Pass host to enable live end-to-end test (device must be in File Transfer mode).
 
 set -uo pipefail
 FAIL=0
@@ -20,65 +20,71 @@ else
   exit 1
 fi
 
-echo "== unit tests =="
+echo "== unit tests: archiver =="
 if docker run --rm "$IMAGE" python -m pytest tests/test_archiver.py -v; then
-  pass "pytest"
+  pass "pytest test_archiver"
 else
-  fail "pytest"
+  fail "pytest test_archiver"
+fi
+
+echo "== unit tests: vault writer =="
+if docker run --rm "$IMAGE" python -m pytest tests/test_vault_writer.py -v; then
+  pass "pytest test_vault_writer"
+else
+  fail "pytest test_vault_writer"
 fi
 
 if [ -z "$HOST" ]; then
   echo
-  echo "Tip: pass a host to run live OCR test, e.g.:"
+  echo "Tip: pass a host to run the live end-to-end test:"
   echo "  ./test-phase4.sh crosspoint.local"
-  echo "  ./test-phase4.sh 192.168.x.x"
 else
-  # Resolve hostname on the host so the container can reach it.
+  # Resolve hostname.
   if [[ "$HOST" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-    DEVICE_IP="$HOST"
-    ADD_HOST=""
+    DEVICE_IP="$HOST"; ADD_HOST=""
   else
     DEVICE_IP=$(getent hosts "$HOST" 2>/dev/null | awk '{print $1}')
     if [ -z "$DEVICE_IP" ]; then
-      echo "  warn - could not resolve $HOST; using hostname directly via --network host"
-      DEVICE_IP="$HOST"
-      ADD_HOST=""
+      echo "  warn - could not resolve $HOST; using hostname directly"
+      DEVICE_IP="$HOST"; ADD_HOST=""
     else
       ADD_HOST="--add-host $HOST:$DEVICE_IP"
     fi
   fi
 
-  echo "== live OCR test (device: $HOST → $DEVICE_IP) =="
-  echo "  Fetching first available screenshot and running Tesseract..."
-  docker run --init --rm --network host $ADD_HOST -e "_OCR_HOST=$HOST" "$IMAGE" python - <<'PYEOF'
-import asyncio, sys
-import aiohttp
-from xteink_service.archiver import ScreenshotArchiver
-import os
+  VAULT_DIR=$(mktemp -d)
+  echo "== live end-to-end sync (device: $HOST -> $DEVICE_IP) =="
+  echo "  Vault dir: $VAULT_DIR"
 
-HOST = os.environ.get("_OCR_HOST", "crosspoint.local")
+  docker run --init --rm --network host $ADD_HOST \
+    -v "$VAULT_DIR:/vault" \
+    "$IMAGE" python -m xteink_service.sync_once "$HOST" /vault
 
-async def main():
-    a = ScreenshotArchiver("/vault", HOST)
-    async with aiohttp.ClientSession() as s:
-        shots = await a._list_screenshots(s)
-    if not shots:
-        print("No screenshots found on device.")
-        sys.exit(0)
-    book, day, path = shots[0]
-    print(f"Screenshot : {path}")
-    print(f"Book       : {book}  |  Day: {day}")
-    async with aiohttp.ClientSession() as s:
-        bmp = await a._download_file(s, path)
-    png = a._bmp_to_png(bmp)
-    text = a._ocr_image(png)
-    print(f"\n--- OCR output ---")
-    print(text if text else "(empty — blank page or Tesseract found no text)")
+  echo "  --- vault contents ---"
+  find "$VAULT_DIR" -type f | sort
 
-asyncio.run(main())
-PYEOF
+  if find "$VAULT_DIR" -name "*.md" | grep -q .; then
+    pass "daily note(s) created in vault"
+  else
+    fail "no markdown files written to vault"
+  fi
+
+  if find "$VAULT_DIR" -name "*.png" | grep -q .; then
+    pass "PNG file(s) written to attachments"
+  else
+    fail "no PNG files written to vault"
+  fi
+
+  # Show the first daily note so we can inspect the OCR callout
+  first_note=$(find "$VAULT_DIR" -name "*.md" | sort | head -1)
+  if [ -n "$first_note" ]; then
+    echo "  --- first daily note ---"
+    cat "$first_note"
+  fi
+
+  rm -rf "$VAULT_DIR"
 fi
 
 echo
-[ "$FAIL" -eq 0 ] && echo "Phase 4 (so far): all checks passed" || echo "Phase 4: one or more checks FAILED"
+[ "$FAIL" -eq 0 ] && echo "Phase 4: all checks passed" || echo "Phase 4: one or more checks FAILED"
 exit "$FAIL"

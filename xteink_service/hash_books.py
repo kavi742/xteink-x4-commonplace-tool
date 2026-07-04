@@ -31,8 +31,12 @@ def _koreader_lua_hash(data: bytes) -> str:
 async def list_books(session: aiohttp.ClientSession, host: str) -> list[dict]:
     """Return all EPUB/PDF file entries found anywhere under / on the device."""
     books: list[dict] = []
+    seen: set[str] = set()
 
-    async def walk(path: str) -> None:
+    async def walk(path: str, depth: int = 0) -> None:
+        if depth > 5 or path in seen:
+            return
+        seen.add(path)
         try:
             async with session.get(
                 f"http://{host}/api/files",
@@ -43,15 +47,12 @@ async def list_books(session: aiohttp.ClientSession, host: str) -> list[dict]:
                     return
                 items = await resp.json()
         except Exception as e:
-            print(f"  warn: listing {path} failed: {e}")
+            print(f"  warn: listing {path!r} failed: {e}")
             return
 
         for item in items:
             if item.get("isDirectory"):
-                # Only recurse into obvious book directories
-                name = item["name"].lower()
-                if any(k in name for k in ("book", "read", "epub", "lib", "storage")):
-                    await walk(f"{path}/{item['name']}")
+                await walk(f"{path}/{item['name']}", depth + 1)
             else:
                 if item["name"].lower().endswith((".epub", ".pdf", ".mobi", ".azw3")):
                     books.append({"name": item["name"], "path": f"{path}/{item['name']}"})

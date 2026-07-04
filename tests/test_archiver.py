@@ -144,6 +144,28 @@ def test_bmp_to_png_preserves_dimensions():
 
 
 # ------------------------------------------------------------------ #
+# _embed_ocr_in_png                                                   #
+# ------------------------------------------------------------------ #
+
+def test_embed_ocr_roundtrip():
+    """OCR text embedded as iTXt can be read back via img.info."""
+    png = ScreenshotArchiver._bmp_to_png(_make_bmp())
+    with_ocr = ScreenshotArchiver._embed_ocr_in_png(png, "Hello world")
+
+    img = Image.open(io.BytesIO(with_ocr))
+    assert img.info.get("ocr_text") == "Hello world"
+
+
+def test_embed_ocr_preserves_image():
+    """Embedding OCR text does not change the image dimensions."""
+    png = ScreenshotArchiver._bmp_to_png(_make_bmp(width=3, height=5))
+    with_ocr = ScreenshotArchiver._embed_ocr_in_png(png, "text")
+
+    img = Image.open(io.BytesIO(with_ocr))
+    assert img.size == (3, 5)
+
+
+# ------------------------------------------------------------------ #
 # _ocr_image                                                          #
 # ------------------------------------------------------------------ #
 

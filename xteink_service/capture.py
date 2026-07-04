@@ -29,15 +29,20 @@ async def main(host: str) -> None:
         bmp = await a._download_file(s, path)
 
     png = a._bmp_to_png(bmp)
+    ocr_text = a._ocr_image(png)
+    if ocr_text:
+        png = a._embed_ocr_in_png(png, ocr_text)
 
     with open("/output/sample_screenshot.png", "wb") as f:
         f.write(png)
     print("Saved     : /output/sample_screenshot.png")
 
-    text = a._ocr_image(png) or ""
+    text = ocr_text or ""
     with open("/output/sample_ocr.txt", "w") as f:
         f.write(text)
     print("Saved     : /output/sample_ocr.txt")
+    if ocr_text:
+        print("            (OCR text also embedded in PNG iTXt metadata)")
 
     print("\n--- OCR output ---")
     print(text if text else "(empty — blank page or no recognisable text)")

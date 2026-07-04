@@ -5,7 +5,7 @@ from datetime import datetime
 
 import aiohttp
 import pytesseract
-from PIL import Image
+from PIL import Image, PngImagePlugin
 
 from xteink_service.status_display import x4_status
 
@@ -40,6 +40,8 @@ class ScreenshotArchiver:
                     content = await self._download_file(session, filepath)
                     png_data = self._bmp_to_png(content)
                     ocr_text = self._ocr_image(png_data)
+                    if ocr_text:
+                        png_data = self._embed_ocr_in_png(png_data, ocr_text)
 
                     # ponytail: state dedup + vault write wired in Phase 5/7
                     logger.info(
@@ -113,3 +115,13 @@ class ScreenshotArchiver:
         except Exception as exc:
             logger.warning("OCR failed, skipping text extraction: %s", exc)
             return None
+
+    @staticmethod
+    def _embed_ocr_in_png(png_data: bytes, ocr_text: str) -> bytes:
+        """Embed OCR text as an iTXt metadata chunk in the PNG bytes."""
+        img = Image.open(io.BytesIO(png_data))
+        info = PngImagePlugin.PngInfo()
+        info.add_itxt("ocr_text", ocr_text)
+        out = io.BytesIO()
+        img.save(out, format="PNG", pnginfo=info)
+        return out.getvalue()

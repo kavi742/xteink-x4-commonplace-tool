@@ -17,8 +17,13 @@ async def main(host: str) -> None:
     timeout = aiohttp.ClientTimeout(total=10)
 
     print(f"Connecting to {host}...")
-    async with aiohttp.ClientSession(timeout=timeout) as s:
-        shots = await a._list_screenshots(s)
+    try:
+        async with aiohttp.ClientSession(timeout=timeout) as s:
+            shots = await a._list_screenshots(s)
+    except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+        print(f"Cannot reach {host}: {e}")
+        print("Is the X4 in File Transfer mode?")
+        sys.exit(1)
 
     if not shots:
         print("No screenshots found on device — is it in File Transfer mode?")

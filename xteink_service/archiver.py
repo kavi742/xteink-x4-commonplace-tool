@@ -28,7 +28,13 @@ class ScreenshotArchiver:
             async with x4_status(self.device_host) as show:
                 await show("Syncing screenshots...")
 
-                screenshots = await self._list_screenshots(session)
+                try:
+                    screenshots = await self._list_screenshots(session)
+                except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+                    logger.warning("Cannot reach X4 at %s: %s", self.device_host, e)
+                    await show("X4 not reachable")
+                    return
+
                 if not screenshots:
                     await show("No new screenshots")
                     await asyncio.sleep(5)

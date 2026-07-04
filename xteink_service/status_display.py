@@ -50,8 +50,7 @@ if __name__ == "__main__":
     async def _test() -> None:
         async with x4_status(_host) as show:
             await show(_msg)
-            logger.info("Sent: %r — check X4 screen", _msg)
-            await asyncio.sleep(5)  # keep visible
+            await asyncio.sleep(5)  # keep visible on screen
 
     try:
         asyncio.run(_test())

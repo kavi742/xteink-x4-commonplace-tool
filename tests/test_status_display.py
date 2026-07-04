@@ -8,7 +8,10 @@ async def test_show_sends_correct_protocol():
     ws = AsyncMock()
     ws.recv = AsyncMock(side_effect=["READY", "DONE"])
 
-    with patch("xteink_service.status_display.websockets.connect", return_value=ws):
+    with patch(
+        "xteink_service.status_display.websockets.connect",
+        new=AsyncMock(return_value=ws),
+    ):
         async with x4_status("test.local") as show:
             await show("Hello")
 
@@ -32,7 +35,10 @@ async def test_show_tolerates_unexpected_server_response():
     ws = AsyncMock()
     ws.recv = AsyncMock(return_value="ERROR")
 
-    with patch("xteink_service.status_display.websockets.connect", return_value=ws):
+    with patch(
+        "xteink_service.status_display.websockets.connect",
+        new=AsyncMock(return_value=ws),
+    ):
         async with x4_status("test.local") as show:
             await show("Hello")  # must not raise
 

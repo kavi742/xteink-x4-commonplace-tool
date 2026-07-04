@@ -40,12 +40,16 @@ else
 fi
 
 echo "== graceful degradation =="
-# Points at localhost:81 where nothing is listening — must exit 0, not crash.
-if docker run --init --rm --network host "$IMAGE" \
-    python xteink_service/status_display.py 127.0.0.1 "degradation-test"; then
-  pass "exits 0 when WebSocket connection is refused"
+# Points at localhost:81 where nothing is listening (or returns non-WS).
+# Must exit 0 AND log the 'Could not connect' warning.
+deg_out=$(docker run --init --rm --network host "$IMAGE" \
+    python xteink_service/status_display.py 127.0.0.1 "degradation-test" 2>&1)
+deg_exit=$?
+if [ $deg_exit -eq 0 ] && echo "$deg_out" | grep -q "Could not connect"; then
+  pass "exits 0 and logs warning on connection failure"
 else
-  fail "crashed on connection failure (expected graceful exit)"
+  echo "$deg_out"
+  fail "expected exit 0 + 'Could not connect' warning (got exit $deg_exit)"
 fi
 
 echo "== live: send message to X4 screen (device required) =="

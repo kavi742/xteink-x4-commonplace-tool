@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Phase 5 test: KOReader sync server
 # Run from anywhere: bash test_scripts/test-phase5.sh [server_url]
-# SERVER_URL defaults to http://localhost:8081 (for live server test).
+# SERVER_URL defaults to http://localhost:8090 (for live server test).
 
 set -uo pipefail
 FAIL=0
-SERVER_URL="${1:-http://localhost:8081}"
+SERVER_URL="${1:-http://localhost:8090}"
 IMAGE="xteink-service:dev"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
@@ -29,7 +29,7 @@ fi
 echo "== live server test (server must be running at $SERVER_URL) =="
 if ! curl -sf "$SERVER_URL/users/auth" > /dev/null 2>&1; then
   echo "  skip - no server at $SERVER_URL"
-  echo "         Start with: docker run --rm -p 8081:8081 $IMAGE python -m uvicorn xteink_service.koreader_sync:app --host 0.0.0.0 --port 8081"
+  echo "         Start with: docker run --rm -p 8090:8090 $IMAGE python -m uvicorn xteink_service.koreader_sync:app --host 0.0.0.0 --port 8090"
 else
   # Auth
   r=$(curl -sf "$SERVER_URL/users/auth"); echo "$r"

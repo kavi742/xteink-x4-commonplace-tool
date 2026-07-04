@@ -223,8 +223,8 @@ Two scenarios, two configs:
 
 | Scenario | `DEVICE_HOST` | KOReader Sync URL on X4 |
 | :--- | :--- | :--- |
-| **At home (LAN)** | `crosspoint.local` | `http://homelab-ip:8081` |
-| **Away (phone hotspot + Tailscale)** | X4's Tailscale IP | `http://server-tailscale-ip:8081` |
+| **At home (LAN)** | `crosspoint.local` | `http://homelab-ip:8090` |
+| **Away (phone hotspot + Tailscale)** | X4's Tailscale IP | `http://server-tailscale-ip:8090` |
 
 ### Tailscale + Mobile Hotspot Setup
 
@@ -232,7 +232,7 @@ Two scenarios, two configs:
 2. Install the Tailscale Android app on the X4.
 3. Both devices join the same Tailnet.
 4. In `docker-compose.yml`, set `DEVICE_HOST` to the X4's Tailscale IP (`100.x.x.x`).
-5. In KOReader Sync settings on the X4, enter the server's Tailscale IP: `http://100.x.x.x:8081`.
+5. In KOReader Sync settings on the X4, enter the server's Tailscale IP: `http://100.x.x.x:8090`.
 
 `network_mode: host` handles this automatically — the container shares the host's Tailscale interface with no extra configuration.
 
@@ -258,7 +258,7 @@ services:
 - Set `DEVICE_HOST=crosspoint.local` at home; `DEVICE_HOST=100.x.x.x` (X4's Tailscale IP) when away
 - Mount your Obsidian vault to `/data/vault`
 - State directory persists the SQLite database across restarts
-- Health check endpoint available at `http://localhost:8081/health`
+- Health check endpoint available at `http://localhost:8090/health`
 
 ## Reliability Design
 

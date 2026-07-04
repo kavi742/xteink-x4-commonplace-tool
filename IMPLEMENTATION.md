@@ -460,7 +460,7 @@ async def main():
     poll_interval = int(os.getenv("POLL_INTERVAL", "5"))
 
     # Start KOReader sync server in background
-    config = uvicorn.Config(app, host="0.0.0.0", port=8081, log_level="info")
+    config = uvicorn.Config(app, host="0.0.0.0", port=8090, log_level="info")
     asyncio.create_task(uvicorn.Server(config).serve())
 
     # Poll for device, sync, then wait for it to go offline before repeating

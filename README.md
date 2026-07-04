@@ -37,8 +37,8 @@ When you press **File Transfer** on your Xteink X4, this homelab service:
    ```
 
 4. **Configure the X4**: In Settings → KOReader Sync, enter your server URL and enable "Send Document Metadata":
-   - **At home:** `http://homelab-ip:8081`
-   - **Away (phone hotspot):** install [Tailscale](https://tailscale.com) on both the X4 (Android app) and the server, then use `http://server-tailscale-ip:8081`. Also set `DEVICE_HOST` to the X4's Tailscale IP in `docker-compose.yml` so screenshot sync works too.
+   - **At home:** `http://homelab-ip:8090`
+   - **Away (phone hotspot):** install [Tailscale](https://tailscale.com) on both the X4 (Android app) and the server, then use `http://server-tailscale-ip:8090`. Also set `DEVICE_HOST` to the X4's Tailscale IP in `docker-compose.yml` so screenshot sync works too.
 
 5. **Press File Transfer** on the X4. Watch the screen show progress as screenshots sync. Reading progress updates automatically when you sync KOReader.
 

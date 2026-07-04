@@ -19,10 +19,10 @@ COPY . .
 
 ENV PATH="/app/.venv/bin:$PATH"
 
-EXPOSE 8081
+EXPOSE 8090
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
-  CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8081/health', timeout=3)" || exit 1
+  CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8090/health', timeout=3)" || exit 1
 
 # xteink_service/ doesn't exist yet (see pyproject.toml's [tool.uv]
 # package = false note) — this build succeeds today, but the run step

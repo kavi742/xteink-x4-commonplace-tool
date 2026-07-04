@@ -123,7 +123,7 @@ A homelab service that automatically archives screenshots and reading progress f
 - "Completed" briefly after DONE.
 
 ### Status Page (FastAPI)
-- URL: `http://homelab.local:8081/status`
+- URL: `http://homelab.local:8090/status`
 - Shows: last sync time, books touched today, total screenshots, recent errors.
 
 ### Notifications

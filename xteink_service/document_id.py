@@ -2,15 +2,16 @@
 KOReader / CrossPoint document ID — partial MD5 hash.
 
 Algorithm (from CrossPoint firmware source KOReaderDocumentId.cpp):
-  Read 1024 bytes at each of these offsets (skip if beyond EOF):
-  256, 1024, 4096, 16384, 65536, 262144, 1048576, 4194304,
-  16777216, 67108864, 268435456, 1073741824
-  MD5 of the concatenation of all retrieved chunks.
+  getOffset(i): returns 0 for i < 0, else 1024 << (2*i)
+  Loop: for i = -1 to 10 (12 offsets total):
+    0, 1024, 4096, 16384, 65536, 262144, 1048576, 4194304,
+    16777216, 67108864, 268435456, 1073741824
+  Skip offset if >= file size. Read min(1024, remaining) bytes. MD5 all chunks.
 """
 import hashlib
 
-# Offsets: 1024 << (2*i) for i = -1 to 10
-_OFFSETS: list[int] = [1024 << (2 * i) if i >= 0 else 1024 >> 2 for i in range(-1, 11)]
+# getOffset(i): 0 for i=-1, else 1024 << (2*i) for i=0..10
+_OFFSETS: list[int] = [0] + [1024 << (2 * i) for i in range(11)]
 _CHUNK = 1024
 
 

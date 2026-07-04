@@ -34,11 +34,12 @@ async def main(host: str) -> None:
     print(f"Book       : {book}  |  Day: {day}")
 
     async with x4_status(host) as show:
-        label = a._status_label(book, path, 1, 1)
-        await show(label)
-
         async with aiohttp.ClientSession(timeout=timeout) as s:
             bmp = await a._download_file(s, path)
+
+        # Stream the BMP bytes through the WebSocket so the progress bar fills correctly
+        label = a._status_label(book, path, 1, 1)
+        await show(label, data=bmp)
 
         png = a._bmp_to_png(bmp)
         ocr_text = a._ocr_image(png)

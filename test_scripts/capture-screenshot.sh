@@ -30,7 +30,7 @@ echo "         $OUT_DIR/sample_ocr.txt"
 echo
 
 docker build -t "$IMAGE" "$REPO_ROOT" > /dev/null 2>&1 \
-  && echo "Image ready." \
+  && echo "Docker image built." \
   || { echo "docker build failed"; exit 1; }
 
 docker run --init --rm --network host $ADD_HOST \

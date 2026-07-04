@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import io
 import logging
 import re
@@ -9,6 +10,7 @@ import pytesseract
 from PIL import Image, PngImagePlugin
 
 from xteink_service.status_display import x4_status
+from xteink_service.state import SyncState
 from xteink_service.vault_writer import VaultWriter
 
 logger = logging.getLogger(__name__)
@@ -20,8 +22,7 @@ class ScreenshotArchiver:
     def __init__(self, vault_path: str, device_host: str = "crosspoint.local", state_db: str = "state.db"):
         self.vault_path = vault_path
         self.device_host = device_host
-        # ponytail: state and vault wired in later phases
-        self._state_db = state_db
+        self._state = SyncState(state_db)
         self._vault = VaultWriter(vault_path)
 
     async def run_sync(self) -> None:
@@ -46,21 +47,30 @@ class ScreenshotArchiver:
                 book_counts: dict[str, int] = {}
 
                 for idx, (book, day, filepath) in enumerate(screenshots, 1):
+                    if self._state.is_path_synced(filepath):
+                        continue
+
                     label = self._status_label(book, filepath, idx, total)
                     await show(label)
 
                     content = await self._download_file(session, filepath)
+                    content_hash = hashlib.sha256(content).hexdigest()
+
+                    if self._state.is_synced(filepath, content_hash):
+                        continue
+
                     png_data = self._bmp_to_png(content)
                     ocr_text = self._ocr_image(png_data)
                     if ocr_text:
                         png_data = self._embed_ocr_in_png(png_data, ocr_text)
 
-                    # ponytail: state dedup wired in Phase 5
                     embed = self._vault.write_screenshot(book, day, png_data, idx)
                     self._vault.append_to_daily_note(book, day, embed, ocr_text)
+                    self._state.mark_synced(
+                        filepath, content_hash, book, day.isoformat(), ocr_text
+                    )
 
                     book_counts[book] = book_counts.get(book, 0) + 1
-
                     logger.info("Archived %s  ocr=%s", filepath,
                                 f"{len(ocr_text)} chars" if ocr_text else "empty")
 

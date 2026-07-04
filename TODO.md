@@ -70,9 +70,9 @@ Minimal SQLite state so `run_sync()` skips already-archived screenshots.
 Full content backup (PNG blobs, OCR corrections) moves to Phase 9.
 
 ### 6a — Screenshot dedup
-- [ ] Create `synced_screenshots` table (`device_path`, `content_hash`, `synced_at`, `book_title`, `sync_date`, `ocr_text`)
-- [ ] Implement `SyncState`: `is_path_synced()`, `is_synced()`, `mark_synced()`
-- [ ] Wire into `run_sync()` — skip download if path already in DB
+- [x] Create `synced_screenshots` table (`device_path`, `content_hash`, `synced_at`, `book_title`, `sync_date`, `ocr_text`)
+- [x] Implement `SyncState`: `is_path_synced()`, `is_synced()`, `mark_synced()`
+- [x] Wire into `run_sync()` — skip download if path already in DB
 - [ ] Test idempotency (multiple runs must not duplicate rows or re-write vault files)
 
 ### 6b — Document alias table (hash → title mapping)

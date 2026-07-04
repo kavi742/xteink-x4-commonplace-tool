@@ -27,7 +27,8 @@ async def main(host: str) -> None:
     print(f"Book       : {book}  |  Day: {day}")
 
     async with x4_status(host) as show:
-        await show(f"Capturing: {book[:24]}")
+        label = a._status_label(book, path, 1, 1)
+        await show(label)
 
         async with aiohttp.ClientSession() as s:
             bmp = await a._download_file(s, path)
@@ -36,8 +37,6 @@ async def main(host: str) -> None:
         ocr_text = a._ocr_image(png)
         if ocr_text:
             png = a._embed_ocr_in_png(png, ocr_text)
-
-        await show("Running OCR..." if ocr_text is None else f"OCR: {len(ocr_text)} chars")
 
         with open("/output/sample_screenshot.png", "wb") as f:
             f.write(png)
@@ -50,8 +49,8 @@ async def main(host: str) -> None:
         if ocr_text:
             print("            (OCR text also embedded in PNG iTXt metadata)")
 
-        await show("Capture done")
-        await asyncio.sleep(3)
+        await show(f"1 from {book[:12]}  DONE")
+        await asyncio.sleep(30)
 
     print("\n--- OCR output ---")
     print(text if text else "(empty — blank page or no recognisable text)")

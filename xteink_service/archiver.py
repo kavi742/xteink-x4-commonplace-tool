@@ -1,6 +1,7 @@
 import asyncio
 import io
 import logging
+import re
 from datetime import datetime
 
 import aiohttp
@@ -30,12 +31,15 @@ class ScreenshotArchiver:
                 screenshots = await self._list_screenshots(session)
                 if not screenshots:
                     await show("No new screenshots")
-                    await asyncio.sleep(2)
+                    await asyncio.sleep(5)
                     return
 
                 total = len(screenshots)
+                book_counts: dict[str, int] = {}
+
                 for idx, (book, day, filepath) in enumerate(screenshots, 1):
-                    await show(f"Screenshot {idx}/{total} \u2014 {book[:20]}")
+                    label = self._status_label(book, filepath, idx, total)
+                    await show(label)
 
                     content = await self._download_file(session, filepath)
                     png_data = self._bmp_to_png(content)
@@ -43,19 +47,43 @@ class ScreenshotArchiver:
                     if ocr_text:
                         png_data = self._embed_ocr_in_png(png_data, ocr_text)
 
-                    # ponytail: state dedup + vault write wired in Phase 5/7
-                    logger.info(
-                        "Downloaded %s  ocr=%s",
-                        filepath,
-                        f"{len(ocr_text)} chars" if ocr_text else "empty",
-                    )
+                    book_counts[book] = book_counts.get(book, 0) + 1
 
-                await show(f"Done -- {total} screenshot(s) ready")
-                await asyncio.sleep(3)
+                    # ponytail: state dedup + vault write wired in Phase 5/7
+                    logger.info("Downloaded %s  ocr=%s", filepath,
+                                f"{len(ocr_text)} chars" if ocr_text else "empty")
+
+                # Summary — one line per book, then DONE
+                summary = "  ".join(
+                    f"{count} from {book[:12]}" for book, count in book_counts.items()
+                ) + "  DONE"
+                await show(summary)
+                await asyncio.sleep(30)  # hold until user disconnects
 
     # ------------------------------------------------------------------ #
     # Data fetching                                                        #
     # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _parse_filename(name: str) -> dict:
+        """
+        Extract chapter/page from a Crosspoint screenshot filename.
+        Example: Pastoral_ch8_p25_20pct_480360.bmp -> {chapter: 8, page: 25}
+        Returns empty dict if the pattern doesn't match.
+        """
+        m = re.search(r'_ch(\d+)_p(\d+)', name)
+        if not m:
+            return {}
+        return {"chapter": int(m.group(1)), "page": int(m.group(2))}
+
+    @staticmethod
+    def _status_label(book: str, filepath: str, idx: int, total: int) -> str:
+        """Build a concise status message for the X4 screen."""
+        filename = filepath.rsplit("/", 1)[-1]
+        info = ScreenshotArchiver._parse_filename(filename)
+        if info:
+            return f"[{idx}/{total}] ch{info['chapter']} p{info['page']} {book[:14]}"
+        return f"[{idx}/{total}] {book[:20]}"
 
     async def _list_screenshots(self, session: aiohttp.ClientSession) -> list[tuple[str, object, str]]:
         """

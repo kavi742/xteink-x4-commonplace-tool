@@ -166,6 +166,33 @@ def test_embed_ocr_preserves_image():
 
 
 # ------------------------------------------------------------------ #
+# _parse_filename / _status_label                                     #
+# ------------------------------------------------------------------ #
+
+def test_parse_filename_extracts_chapter_and_page():
+    assert ScreenshotArchiver._parse_filename("Pastoral_ch8_p25_20pct_480360.bmp") == {
+        "chapter": 8, "page": 25
+    }
+
+
+def test_parse_filename_returns_empty_for_unknown_format():
+    assert ScreenshotArchiver._parse_filename("screenshot_001.bmp") == {}
+
+
+def test_status_label_with_chapter_page():
+    label = ScreenshotArchiver._status_label("Pastoral", "/screenshots/Pastoral/Pastoral_ch8_p25_20pct.bmp", 3, 10)
+    assert "[3/10]" in label
+    assert "ch8" in label
+    assert "p25" in label
+
+
+def test_status_label_fallback_without_chapter_page():
+    label = ScreenshotArchiver._status_label("MyBook", "/screenshots/MyBook/img001.bmp", 1, 5)
+    assert "[1/5]" in label
+    assert "MyBook" in label
+
+
+# ------------------------------------------------------------------ #
 # _ocr_image                                                          #
 # ------------------------------------------------------------------ #
 

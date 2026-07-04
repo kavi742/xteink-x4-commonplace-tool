@@ -1,9 +1,13 @@
+import os
+import tempfile
+
 import pytest
 from fastapi.testclient import TestClient
 
-# Redirect DB to an in-memory path for tests
-import os
-os.environ["KOREADER_DB"] = ":memory:"
+# Use a real temp file so ProgressStore uses per-operation connections
+# (avoids :memory: isolation issues where each new connection is empty)
+_tmpdb = tempfile.mktemp(suffix=".db")
+os.environ["KOREADER_DB"] = _tmpdb
 
 from xteink_service.koreader_sync import app, _store
 

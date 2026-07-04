@@ -33,14 +33,16 @@ app = FastAPI()
 class ProgressStore:
     def __init__(self, db_path: str):
         self.db_path = db_path
-        # check_same_thread=False is safe here: FastAPI uses a single thread
-        # per request under the default uvicorn worker, and we never mutate
-        # from multiple threads simultaneously.
-        self._conn = sqlite3.connect(db_path, check_same_thread=False)
         self._init_db()
 
+    def _connect(self) -> sqlite3.Connection:
+        """Open a fresh connection. Each call gets its own connection so a
+        deleted/replaced DB file is picked up automatically on next operation."""
+        return sqlite3.connect(self.db_path)
+
     def _init_db(self) -> None:
-        self._conn.execute("""
+        with self._connect() as conn:
+            conn.execute("""
                 CREATE TABLE IF NOT EXISTS progress_updates (
                     id          INTEGER PRIMARY KEY AUTOINCREMENT,
                     document    TEXT    NOT NULL,
@@ -53,7 +55,6 @@ class ProgressStore:
                     timestamp   INTEGER DEFAULT (strftime('%s','now'))
                 )
             """)
-        self._conn.commit()
 
     def upsert(
         self,
@@ -66,36 +67,39 @@ class ProgressStore:
         author: str = "",
     ) -> dict:
         ts = int(datetime.now(timezone.utc).timestamp())
-        self._conn.execute(
-            """INSERT INTO progress_updates
-               (document, progress, percentage, device, device_id, title, author, timestamp)
-               VALUES (?,?,?,?,?,?,?,?)""",
-            (document, progress, percentage, device, device_id, title, author, ts),
-        )
-        self._conn.commit()
+        with self._connect() as conn:
+            conn.execute(
+                """INSERT INTO progress_updates
+                   (document, progress, percentage, device, device_id, title, author, timestamp)
+                   VALUES (?,?,?,?,?,?,?,?)""",
+                (document, progress, percentage, device, device_id, title, author, ts),
+            )
         return self._latest(document)
 
     def _latest(self, document: str) -> dict | None:
-        self._conn.row_factory = sqlite3.Row
-        row = self._conn.execute(
-            "SELECT * FROM progress_updates WHERE document=? ORDER BY id DESC LIMIT 1",
-            (document,),
-        ).fetchone()
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT * FROM progress_updates WHERE document=? ORDER BY id DESC LIMIT 1",
+                (document,),
+            ).fetchone()
         return dict(row) if row else None
 
     def _latest_n(self, document: str, n: int) -> list[dict]:
-        self._conn.row_factory = sqlite3.Row
-        rows = self._conn.execute(
-            "SELECT * FROM progress_updates WHERE document=? ORDER BY id DESC LIMIT ?",
-            (document, n),
-        ).fetchall()
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT * FROM progress_updates WHERE document=? ORDER BY id DESC LIMIT ?",
+                (document, n),
+            ).fetchall()
         return [dict(r) for r in rows]
 
     def all(self) -> list[dict]:
-        self._conn.row_factory = sqlite3.Row
-        rows = self._conn.execute(
-            "SELECT * FROM progress_updates ORDER BY id DESC LIMIT 200"
-        ).fetchall()
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT * FROM progress_updates ORDER BY id DESC LIMIT 200"
+            ).fetchall()
         return [dict(r) for r in rows]
 
 
@@ -156,46 +160,16 @@ async def put_progress(update: ProgressIn):
     return record
 
 
-async def _try_scan_resolve(doc_hash: str, state_db: str) -> str | None:
-    """Attempt to resolve an unknown hash by scanning epub filenames on the device."""
-    import hashlib
-    import socket
-    import aiohttp as _aiohttp
-    device_host = os.getenv("DEVICE_HOST", "crosspoint.local")
-    try:
-        # Resolve mDNS hostname synchronously (uses avahi/nsswitch) before async HTTP
-        device_ip = await asyncio.get_event_loop().run_in_executor(
-            None, socket.gethostbyname, device_host
-        )
-        from xteink_service.alias import _list_device_books, _state_conn
-        timeout = _aiohttp.ClientTimeout(total=15)
-        async with _aiohttp.ClientSession(timeout=timeout) as session:
-            books = await _list_device_books(session, device_ip)
-        for book in books:
-            name = book["name"]
-            if hashlib.md5(name.encode()).hexdigest() == doc_hash:
-                title = name.rsplit(".", 1)[0]
-                conn = _state_conn(state_db)
-                conn.execute(
-                    "INSERT OR REPLACE INTO document_aliases "
-                    "(hash, title, filename, resolved_by, computed_at) VALUES (?,?,?,'auto',?)",
-                    (doc_hash, title, name, datetime.now(timezone.utc).isoformat()),
-                )
-                conn.commit()
-                logger.info("Auto-resolved %s… \u2192 %s", doc_hash[:8], title)
-                return title
-    except Exception as exc:
-        logger.debug("Auto-scan failed: %s", exc)
-    return None
-
-
 async def _write_progress_to_vault(update: ProgressIn) -> None:
     """Write reading progress to vault markdown. Silently skips if vault not configured."""
     vault_path = os.getenv("VAULT_PATH", "/data/vault")
     if not os.path.isdir(vault_path):
         return
 
-    # Resolve title: alias table → request metadata → auto-scan device → give up
+    # Resolve title: alias table → request metadata → give up
+    # Note: device port 80 is closed during KOReader sync (reading mode), so
+    # auto-scan is not attempted here. Aliases are resolved by sync_once.py
+    # which runs during File Transfer mode when the file listing API is available.
     title = update.title or None
     state_db = os.getenv("STATE_DB", "/data/state/state.db")
     try:
@@ -204,9 +178,7 @@ async def _write_progress_to_vault(update: ProgressIn) -> None:
     except Exception:
         pass
     if not title:
-        title = await _try_scan_resolve(update.document, state_db)
-    if not title:
-        logger.debug("No title for %s — skipping vault write", update.document[:16])
+        logger.debug("No title for %s — skipping vault write (run sync_once to resolve)", update.document[:16])
         return
 
     try:

@@ -24,7 +24,5 @@ EXPOSE 8090
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
   CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8090/health', timeout=3)" || exit 1
 
-# xteink_service/ doesn't exist yet (see pyproject.toml's [tool.uv]
-# package = false note) — this build succeeds today, but the run step
-# will fail until Phase 4+ adds the actual module.
+# Runs the device watcher loop + KOReader sync server concurrently.
 CMD ["python", "-m", "xteink_service"]

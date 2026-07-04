@@ -17,6 +17,9 @@ services:
       # Note: .local hostnames don't resolve inside the container.
       # Use DEVICE_HOST=<static IP> or add to extra_hosts below.
       - DEVICE_HOST=crosspoint.local
+      - VAULT_PATH=/data/vault
+      - STATE_DB=/data/state/state.db
+      - KOREADER_DB=/data/state/koreader.db
       - PUID=1000
       - PGID=1000
       - TZ=America/Toronto

@@ -23,6 +23,10 @@ echo "Output : $OUT_DIR/sample_screenshot.png"
 echo "         $OUT_DIR/sample_ocr.txt"
 echo
 
+docker build -t "$IMAGE" "$REPO_ROOT" > /dev/null 2>&1 \
+  && echo "Image ready." \
+  || { echo "docker build failed"; exit 1; }
+
 docker run --init --rm --network host $ADD_HOST \
   -v "$OUT_DIR:/output" \
   "$IMAGE" python -m xteink_service.capture "$HOST"

@@ -47,57 +47,11 @@
 - [x] Test end‑to‑end with 3‑5 screenshots
   — 25 screenshots archived from Pastoral in live e2e test (`test-phase4.sh crosspoint.local`)
 
-## Phase 5: State Management & Data Store
+## Phase 5: KOReader Sync Server
 
-The SQLite DB is the primary source of truth. The Obsidian vault is derived
-from it and can be fully reconstructed if sync conflicts corrupt markdown files.
+Receives reading progress from the X4. Data goes straight into SQLite (no vault
+write yet — that happens in Phase 7 once the DB is confirmed working).
 
-### 5a — Core state (dedup + sync tracking)
-- [ ] Create `synced_screenshots` table (see schema below)
-- [ ] Implement `SyncState`: `is_path_synced()`, `is_synced()`, `mark_synced()`
-- [ ] Test idempotency (multiple runs must not duplicate rows)
-- [ ] Test content‑hash keying
-
-### 5b — Content storage
-`synced_screenshots` schema (full backup fields):
-
-| Column | Type | Notes |
-|--------|------|-------|
-| `id` | INTEGER PK | |
-| `device_path` | TEXT | Path on X4 SD card |
-| `content_hash` | TEXT | SHA-256 of original BMP |
-| `book_title` | TEXT | |
-| `sync_date` | TEXT | YYYY-MM-DD (from mtime) |
-| `synced_at` | TIMESTAMP | |
-| `png_data` | BLOB | Full PNG bytes — DB is self-contained backup |
-| `ocr_text` | TEXT | Raw Tesseract output |
-| `ocr_corrected` | TEXT | User-edited correction of OCR text |
-| `user_notes` | TEXT | Free-form notes per screenshot |
-
-- [ ] Add `png_data`, `ocr_corrected`, `user_notes` columns to table
-- [ ] Store PNG bytes in DB on every sync (alongside writing file to vault)
-- [ ] Test: DB row present after sync with non-null png_data
-
-### 5c — CRUD API
-FastAPI endpoints (no new dep — FastAPI already required):
-
-- [ ] `GET /api/books` — list unique books with screenshot counts
-- [ ] `GET /api/books/{book}/screenshots` — list screenshots (metadata, no blob)
-- [ ] `GET /api/screenshots/{id}/image` — serve PNG from DB as `image/png`
-- [ ] `PUT /api/screenshots/{id}` — update `ocr_corrected` and/or `user_notes`
-- [ ] `GET /api/reading-log` — list `progress_updates` entries
-- [ ] `POST /api/vault/export` — re-generate all vault markdown from DB rows
-
-### 5d — Web frontend
-Single HTML file served by FastAPI at `/app`. Vanilla JS + `fetch()`, no build step, no framework.
-
-- [ ] Book list with screenshot counts
-- [ ] Screenshot view per book: image (from `/api/screenshots/{id}/image`), OCR text, notes
-- [ ] Inline edit for `ocr_corrected` and `user_notes` with save button
-- [ ] Reading log tab
-- [ ] "Export vault" button (calls `POST /api/vault/export`)
-
-## Phase 6: KOReader Sync Server
 - [ ] Implement minimal `POST /syncs/progress` endpoint
 - [ ] Implement `GET /syncs/progress` endpoint
 - [ ] Create SQLite `progress_updates` table
@@ -105,21 +59,63 @@ Single HTML file served by FastAPI at `/app`. Vanilla JS + `fetch()`, no build s
 - [ ] Enable "Send Document Metadata" on X4
 - [ ] Verify progress data arrives correctly
 
+## Phase 6: State Management (dedup)
+
+Minimal SQLite state so `run_sync()` skips already-archived screenshots.
+Full content backup (PNG blobs, OCR corrections) moves to Phase 9.
+
+- [ ] Create `synced_screenshots` table (`device_path`, `content_hash`, `synced_at`, `book_title`, `sync_date`, `ocr_text`)
+- [ ] Implement `SyncState`: `is_path_synced()`, `is_synced()`, `mark_synced()`
+- [ ] Wire into `run_sync()` — skip download if path already in DB
+- [ ] Test idempotency (multiple runs must not duplicate rows or re-write vault files)
+
 ## Phase 7: Vault Writer Integration
+
+Write KOReader reading progress into the vault alongside screenshots.
+
 - [ ] Implement `VaultWriter.write_reading_log()`
-- [ ] Implement `VaultWriter.update_book_timeline()`
+- [ ] Implement `VaultWriter.update_book_timeline()` (already scaffolded, needs KOReader data)
 - [ ] Test by sending sample progress updates
-- [ ] Verify frontmatter in book notes works with Obsidian
-- [ ] Add Dataview‑friendly frontmatter (status, last_sync)
+- [ ] Verify date-heading interleaving with screenshots works in Obsidian
 
 ## Phase 8: Observability
+
 - [ ] Implement ntfy.sh notifications
 - [ ] Implement Home Assistant webhook notifications
 - [ ] Create FastAPI JSON status endpoint (`/status`)
 - [ ] Display: last sync time, books touched today, total screenshots, recent errors
 - [ ] Add logging throughout all components
 
-## Phase 9: Integration & Polish
+## Phase 9: Full Data Store + CRUD API + Web UI
+
+The DB becomes primary source of truth — vault can be fully rebuilt from it.
+KOReader sync data (Phase 5) and screenshot data (Phase 6) both feed this.
+
+### Schema additions
+| Column | Table | Notes |
+|--------|-------|-------|
+| `png_data` | `synced_screenshots` | Full PNG bytes — DB self-contained backup |
+| `ocr_corrected` | `synced_screenshots` | User-edited OCR correction |
+| `user_notes` | `synced_screenshots` | Free-form per-screenshot notes |
+
+### CRUD API (FastAPI, no new dep)
+- [ ] `GET /api/books` — book list with screenshot counts
+- [ ] `GET /api/books/{book}/screenshots` — screenshot metadata (no blob)
+- [ ] `GET /api/screenshots/{id}/image` — serve PNG from DB
+- [ ] `PUT /api/screenshots/{id}` — update `ocr_corrected` and/or `user_notes`
+- [ ] `GET /api/reading-log` — KOReader progress history
+- [ ] `POST /api/vault/export` — rebuild all vault markdown from DB
+
+### Web frontend
+Single HTML file at `/app`. Vanilla JS + `fetch()`, no build step, no framework.
+
+- [ ] Book list with screenshot counts
+- [ ] Screenshot view: image, OCR text, inline edit for corrections and notes
+- [ ] Reading log tab
+- [ ] "Export vault" button
+
+## Phase 10: Integration & Polish
+
 - [ ] Wire all components together in `main.py`
 - [ ] Document deployment steps (Docker-first)
 - [ ] Write unit tests for core modules

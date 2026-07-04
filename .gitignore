@@ -31,6 +31,10 @@ state/
 *.log
 logs/
 
+# --- Live test artefacts (captured from device, not for source control) ---
+test_scripts/sample_screenshot.png
+test_scripts/sample_ocr.txt
+
 # --- Secrets / local overrides ---
 .env
 .env.*

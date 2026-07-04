@@ -34,7 +34,7 @@ async def list_books(session: aiohttp.ClientSession, host: str) -> list[dict]:
     seen: set[str] = set()
 
     async def walk(path: str, depth: int = 0) -> None:
-        if depth > 5 or path in seen:
+        if depth > 2 or path in seen:
             return
         seen.add(path)
         try:

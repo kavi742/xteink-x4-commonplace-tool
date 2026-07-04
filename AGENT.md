@@ -9,6 +9,12 @@ invocation. See [TESTING.md](TESTING.md) for the established pattern.
 - Unit tests: `docker run --rm xteink-service:dev python -m pytest ...`
 - Live device tests: `docker run --rm --network host xteink-service:dev ...`
 
+## X4 Status Display
+
+**No emoji in status messages.** The X4's Calibre Wireless display uses a
+limited bitmap font that renders emoji as blank boxes. Use plain ASCII only
+in all `show(...)` calls.
+
 ## Use Ponytail for YAGNI
 
 This project uses the [Ponytail](https://github.com/DietrichGebert/ponytail) YAGNI plugin for LLM agents. 

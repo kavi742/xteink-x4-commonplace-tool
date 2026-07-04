@@ -9,6 +9,7 @@ import sys
 import aiohttp
 
 from xteink_service.archiver import ScreenshotArchiver
+from xteink_service.status_display import x4_status
 
 
 async def main(host: str) -> None:
@@ -25,24 +26,32 @@ async def main(host: str) -> None:
     print(f"Screenshot : {path}")
     print(f"Book       : {book}  |  Day: {day}")
 
-    async with aiohttp.ClientSession() as s:
-        bmp = await a._download_file(s, path)
+    async with x4_status(host) as show:
+        await show(f"Capturing: {book[:24]}")
 
-    png = a._bmp_to_png(bmp)
-    ocr_text = a._ocr_image(png)
-    if ocr_text:
-        png = a._embed_ocr_in_png(png, ocr_text)
+        async with aiohttp.ClientSession() as s:
+            bmp = await a._download_file(s, path)
 
-    with open("/output/sample_screenshot.png", "wb") as f:
-        f.write(png)
-    print("Saved     : /output/sample_screenshot.png")
+        png = a._bmp_to_png(bmp)
+        ocr_text = a._ocr_image(png)
+        if ocr_text:
+            png = a._embed_ocr_in_png(png, ocr_text)
 
-    text = ocr_text or ""
-    with open("/output/sample_ocr.txt", "w") as f:
-        f.write(text)
-    print("Saved     : /output/sample_ocr.txt")
-    if ocr_text:
-        print("            (OCR text also embedded in PNG iTXt metadata)")
+        await show("Running OCR..." if ocr_text is None else f"OCR: {len(ocr_text)} chars")
+
+        with open("/output/sample_screenshot.png", "wb") as f:
+            f.write(png)
+        print("Saved     : /output/sample_screenshot.png")
+
+        text = ocr_text or ""
+        with open("/output/sample_ocr.txt", "w") as f:
+            f.write(text)
+        print("Saved     : /output/sample_ocr.txt")
+        if ocr_text:
+            print("            (OCR text also embedded in PNG iTXt metadata)")
+
+        await show("\u2705 Capture done")
+        await asyncio.sleep(3)
 
     print("\n--- OCR output ---")
     print(text if text else "(empty — blank page or no recognisable text)")

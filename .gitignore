@@ -34,6 +34,7 @@ logs/
 # --- Live test artefacts (captured from device, not for source control) ---
 test_scripts/sample_screenshot.png
 test_scripts/sample_ocr.txt
+test_scripts/vault/
 
 # --- Secrets / local overrides ---
 .env

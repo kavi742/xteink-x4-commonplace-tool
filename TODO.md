@@ -77,37 +77,24 @@ Full content backup (PNG blobs, OCR corrections) moves to Phase 9.
 
 ### 6b — Document alias table (hash → title mapping)
 
-Links KOReader/CrossPoint progress hashes to human-readable book titles.
-The CrossPoint spec hash is not reliably reproducible (Calibre modifies epub files
-on re-transfer, changing the content hash). The KOReader Lua hash and filename MD5
-are also computed on first-open and cached by the firmware; downloaded files may differ.
+KOReader sync `document` field is `md5(filename)` — confirmed 2026-07-04.
+`alias.py --scan` resolves all hashes instantly from the device file listing (no downloads needed).
 
-`document_aliases` schema:
-
-| Column | Type | Notes |
-|--------|------|-------|
-| `hash` | TEXT PK | CrossPoint/KOReader document hash from `/syncs/progress` |
-| `title` | TEXT | Human-readable book title |
-| `filename` | TEXT | Epub filename on device |
-| `resolved_by` | TEXT | `"auto"` or `"manual"` |
-| `computed_at` | TIMESTAMP | |
-
-- [ ] Create `document_aliases` table
-- [ ] **Trigger**: only when a new book folder appears in `/screenshots/` that has no
-  alias yet — run `hash_books.py` against the device, compute both CrossPoint-spec
-  and KOReader-Lua hashes for every epub, store all (hash, filename) pairs
-- [ ] Match newly computed hashes against any unresolved progress hashes in
-  `progress_updates` — write matched rows with `resolved_by = "auto"`
-- [ ] Expose `PUT /api/aliases/{hash}` for manual title entry (Phase 9 web UI fallback)
+- [x] Create `document_aliases` table
+- [x] `alias.py --scan` — fast resolve via `md5(filename)` from file listing alone
+- [x] `alias.py --auto` — fallback: tries content hash variants + filename + path
+- [x] `alias.py <hash> "Title"` — manual override
+- [ ] Wire `--scan` into KOReader sync server: auto-run on every progress update that has an unresolved hash (requires DEVICE_HOST reachable at sync time)
 
 ## Phase 7: Vault Writer Integration
 
 Write KOReader reading progress into the vault alongside screenshots.
 
-- [ ] Implement `VaultWriter.write_reading_log()`
-- [ ] Implement `VaultWriter.update_book_timeline()` (already scaffolded, needs KOReader data)
-- [ ] Test by sending sample progress updates
-- [ ] Verify date-heading interleaving with screenshots works in Obsidian
+- [x] Implement `VaultWriter.write_reading_log()`
+- [x] Implement `VaultWriter.update_book_timeline()`
+- [x] Wire into `koreader_sync.py` `put_progress` endpoint
+- [x] Test with live X4 sync — reading log + book timeline written correctly
+- [ ] Wire `alias.py --scan` into `put_progress` so new hashes auto-resolve on first sync
 
 ## Phase 8: Observability
 

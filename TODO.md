@@ -44,7 +44,8 @@
       fonts, illustrations) to gauge how reliable it actually is
       — confirmed good quality on Pastoral (e-ink text), see test_scripts/sample_ocr.txt
 - [x] Implement `VaultWriter.write_screenshot()` and `append_to_daily_note()`
-- [ ] Test end‑to‑end with 3‑5 screenshots
+- [x] Test end‑to‑end with 3‑5 screenshots
+  — 25 screenshots archived from Pastoral in live e2e test (`test-phase4.sh crosspoint.local`)
 
 ## Phase 5: State Management & Data Store
 

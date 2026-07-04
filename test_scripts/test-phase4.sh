@@ -57,6 +57,7 @@ else
   echo "  Vault dir: $VAULT_DIR"
 
   docker run --init --rm --network host $ADD_HOST \
+    --user "$(id -u):$(id -g)" \
     -v "$VAULT_DIR:/vault" \
     "$IMAGE" python -m xteink_service.sync_once "$HOST" /vault
 

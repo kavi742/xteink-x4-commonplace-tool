@@ -100,6 +100,10 @@ echo
 if $LIVE; then
   echo
   echo "== live hardware test =="
+
+  # Stop the automated-test container so its port is free
+  [ -n "$CONTAINER" ] && docker rm -f "$CONTAINER" > /dev/null 2>&1 && CONTAINER=""
+
   SERVER_IP=$(hostname -I | awk '{print $1}')
 
   LIVE_CONTAINER=$(docker run -d \
@@ -108,10 +112,16 @@ if $LIVE; then
     python -m uvicorn xteink_service.koreader_sync:app \
       --host 0.0.0.0 --port "$PORT" --log-level warning)
 
+  LIVE_READY=false
   for i in $(seq 1 10); do
     sleep 1
-    curl -sf "http://localhost:$PORT/users/auth" > /dev/null 2>&1 && break
+    curl -sf "http://localhost:$PORT/users/auth" > /dev/null 2>&1 && LIVE_READY=true && break
   done
+
+  if ! $LIVE_READY; then
+    fail "live server failed to start on port $PORT"
+    exit "$FAIL"
+  fi
   pass "live server ready at $SERVER_IP:$PORT"
 
   echo

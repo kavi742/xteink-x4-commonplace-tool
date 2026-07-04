@@ -109,6 +109,11 @@ class ProgressIn(BaseModel):
 # Auth stubs (KOReader requires these endpoints to exist)             #
 # ------------------------------------------------------------------ #
 
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
+
 @app.post("/users/create")
 @app.get("/users/auth")
 async def auth_stub():

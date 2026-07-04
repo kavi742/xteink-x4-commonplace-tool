@@ -22,17 +22,17 @@ class VaultWriter:
 
     def write_screenshot(self, book_title: str, day: date, png_data: bytes, index: int) -> str:
         """
-        Write PNG bytes to Commonplace/<book>/attachments/YYYY-MM-DD-NN.png.
-        Returns the relative embed path (e.g. 'attachments/2026-07-03-01.png').
+        Write PNG bytes to Books/<book>/<date>-NN.png.
+        Returns the embed path used in the book note (e.g. 'Pastoral/2026-07-04-01.png').
         """
         date_str = day.strftime("%Y-%m-%d")
         filename = f"{date_str}-{index:02d}.png"
-        book_dir = self.vault_path / "Commonplace" / _sanitize(book_title)
-        attachments_dir = book_dir / "attachments"
-        attachments_dir.mkdir(parents=True, exist_ok=True)
-        (attachments_dir / filename).write_bytes(png_data)
-        logger.debug("Wrote %s", attachments_dir / filename)
-        return f"attachments/{filename}"
+        book_slug = _sanitize(book_title)
+        book_dir = self.vault_path / "Books" / book_slug
+        book_dir.mkdir(parents=True, exist_ok=True)
+        (book_dir / filename).write_bytes(png_data)
+        logger.debug("Wrote %s", book_dir / filename)
+        return f"{book_slug}/{filename}"
 
     def append_to_daily_note(
         self,
@@ -43,20 +43,25 @@ class VaultWriter:
     ) -> None:
         """
         Append a screenshot embed (and optional collapsible OCR callout) to
-        Commonplace/<book>/YYYY-MM-DD.md, creating the note if it doesn't exist.
+        Books/<book>.md under a ## YYYY-MM-DD date heading.
+        Creates the note with frontmatter if it doesn't exist.
         """
         date_str = day.strftime("%Y-%m-%d")
-        book_dir = self.vault_path / "Commonplace" / _sanitize(book_title)
-        note_path = book_dir / f"{date_str}.md"
+        book_slug = _sanitize(book_title)
+        note_path = self.vault_path / "Books" / f"{book_slug}.md"
 
         if not note_path.exists():
             note_path.parent.mkdir(parents=True, exist_ok=True)
-            note_path.write_text(f"# {date_str} \u2014 {book_title}\n\n")
+            note_path.write_text(f'---\ntitle: "{book_title}"\n---\n')
+
+        content = note_path.read_text()
+        date_heading = f"## {date_str}"
 
         with note_path.open("a") as f:
+            if date_heading not in content:
+                f.write(f"\n{date_heading}\n\n")
             f.write(f"![[{embed_path}]]\n")
             if ocr_text:
-                # Collapsible callout — collapsed by default (-), indexed by Obsidian search
                 body = "\n".join(
                     f"> {line}" if line.strip() else ">"
                     for line in ocr_text.splitlines()
@@ -83,16 +88,21 @@ class VaultWriter:
         self, title: str, author: str, day: date, page: int, total_pages: int
     ) -> None:
         date_str = day.strftime("%Y-%m-%d")
-        book_path = self.vault_path / "Books" / f"{_sanitize(title)}.md"
+        book_slug = _sanitize(title)
+        book_path = self.vault_path / "Books" / f"{book_slug}.md"
         percent = int((page / total_pages) * 100) if total_pages else 0
-        entry = f"- **{date_str}**: {percent}% (Page {page}/{total_pages})\n"
-        if book_path.exists():
-            with book_path.open("a") as f:
-                f.write(entry)
-        else:
+        entry = f"- Page {page}/{total_pages} ({percent}%)\n"
+        date_heading = f"## {date_str}"
+
+        if not book_path.exists():
             book_path.parent.mkdir(parents=True, exist_ok=True)
             book_path.write_text(
                 f'---\ntitle: "{title}"\nauthor: "{author or "Unknown"}"\n'
-                f'status: "Reading"\nfirst_opened: {date_str}\n---\n\n'
-                f"## Reading Timeline\n{entry}"
+                f'status: "Reading"\nfirst_opened: {date_str}\n---\n'
             )
+
+        content = book_path.read_text()
+        with book_path.open("a") as f:
+            if date_heading not in content:
+                f.write(f"\n{date_heading}\n\n")
+            f.write(entry)

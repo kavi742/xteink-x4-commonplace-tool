@@ -29,15 +29,15 @@ def test_write_screenshot_creates_file(tmp_path):
     vw = VaultWriter(str(tmp_path))
     embed = vw.write_screenshot("Pastoral", date(2026, 7, 3), b"pngbytes", 1)
 
-    expected = tmp_path / "Commonplace" / "Pastoral" / "attachments" / "2026-07-03-01.png"
+    expected = tmp_path / "Books" / "Pastoral" / "2026-07-03-01.png"
     assert expected.exists()
     assert expected.read_bytes() == b"pngbytes"
-    assert embed == "attachments/2026-07-03-01.png"
+    assert embed == "Pastoral/2026-07-03-01.png"
 
 def test_write_screenshot_sanitizes_book_title(tmp_path):
     vw = VaultWriter(str(tmp_path))
     vw.write_screenshot("A/B:C", date(2026, 7, 3), b"x", 1)
-    book_dir = tmp_path / "Commonplace" / "ABC"
+    book_dir = tmp_path / "Books" / "ABC"
     assert book_dir.exists()
 
 
@@ -45,36 +45,38 @@ def test_write_screenshot_sanitizes_book_title(tmp_path):
 # append_to_daily_note                                                 #
 # ------------------------------------------------------------------ #
 
-def test_append_creates_note_with_header(tmp_path):
+def test_append_creates_note_with_frontmatter(tmp_path):
     vw = VaultWriter(str(tmp_path))
-    vw.append_to_daily_note("Pastoral", date(2026, 7, 3), "attachments/2026-07-03-01.png")
+    vw.append_to_daily_note("Pastoral", date(2026, 7, 3), "Pastoral/2026-07-03-01.png")
 
-    note = tmp_path / "Commonplace" / "Pastoral" / "2026-07-03.md"
+    note = tmp_path / "Books" / "Pastoral.md"
     content = note.read_text()
-    assert "# 2026-07-03" in content
-    assert "![[attachments/2026-07-03-01.png]]" in content
+    assert 'title: "Pastoral"' in content
+    assert "## 2026-07-03" in content
+    assert "![[Pastoral/2026-07-03-01.png]]" in content
 
 def test_append_adds_collapsible_ocr_callout(tmp_path):
     vw = VaultWriter(str(tmp_path))
     vw.append_to_daily_note(
-        "Pastoral", date(2026, 7, 3), "attachments/img.png",
+        "Pastoral", date(2026, 7, 3), "Pastoral/img.png",
         ocr_text="Hello\nworld"
     )
-    content = (tmp_path / "Commonplace" / "Pastoral" / "2026-07-03.md").read_text()
+    content = (tmp_path / "Books" / "Pastoral.md").read_text()
     assert "> [!quote]- OCR text" in content
     assert "> Hello" in content
     assert "> world" in content
 
 def test_append_skips_callout_when_no_ocr(tmp_path):
     vw = VaultWriter(str(tmp_path))
-    vw.append_to_daily_note("Pastoral", date(2026, 7, 3), "attachments/img.png", ocr_text=None)
-    content = (tmp_path / "Commonplace" / "Pastoral" / "2026-07-03.md").read_text()
+    vw.append_to_daily_note("Pastoral", date(2026, 7, 3), "Pastoral/img.png", ocr_text=None)
+    content = (tmp_path / "Books" / "Pastoral.md").read_text()
     assert "[!quote]" not in content
 
-def test_append_accumulates_multiple_screenshots(tmp_path):
+def test_append_accumulates_multiple_screenshots_under_same_heading(tmp_path):
     vw = VaultWriter(str(tmp_path))
-    vw.append_to_daily_note("Book", date(2026, 7, 3), "attachments/img1.png")
-    vw.append_to_daily_note("Book", date(2026, 7, 3), "attachments/img2.png")
-    content = (tmp_path / "Commonplace" / "Book" / "2026-07-03.md").read_text()
+    vw.append_to_daily_note("Book", date(2026, 7, 3), "Book/img1.png")
+    vw.append_to_daily_note("Book", date(2026, 7, 3), "Book/img2.png")
+    content = (tmp_path / "Books" / "Book.md").read_text()
     assert "img1.png" in content
     assert "img2.png" in content
+    assert content.count("## 2026-07-03") == 1  # heading appears only once

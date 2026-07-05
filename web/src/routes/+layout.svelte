@@ -1,5 +1,6 @@
 <script lang="ts">
 	import '../styles/app.css';
+	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { onMount } from 'svelte';
 	import { panel } from '$lib/panel.svelte';
@@ -23,14 +24,26 @@
 		{ href: '/aliases',    label: 'Aliases' },
 	];
 
-	function isActive(href: string) {
-		return page.url.pathname === href || page.url.pathname.startsWith(href + '/');
+	let searchQ = $state('');
+
+	function submitSearch(e: Event) {
+		e.preventDefault();
+		if (searchQ.trim()) goto(`/search?q=${encodeURIComponent(searchQ.trim())}`);
 	}
 </script>
 
 <div class="app">
 	<aside class="sidebar">
 		<div class="sidebar-top">
+			<form onsubmit={submitSearch} style="display:flex;gap:.35rem;margin-bottom:.6rem">
+				<input
+					type="text"
+					bind:value={searchQ}
+					placeholder="Search…"
+					style="flex:1;font-size:12px;padding:.3rem .5rem"
+				/>
+				<button type="submit" style="font-size:12px;padding:.3rem .5rem">↵</button>
+			</form>
 			<nav>
 				<ul class="nav-links">
 					{#each navLinks as link}

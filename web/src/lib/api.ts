@@ -51,10 +51,10 @@ export interface Highlight {
 	created_at: string;
 }
 
-export interface HighlightWithMeta extends Highlight {
-	book_title: string;
-	sync_date: string;
-	vault_png_path: string;
+export interface SearchResult extends Screenshot {
+	match_fields: string[];
+	snippet: string;
+	highlight_matches: string[];
 }
 
 export interface StatusResponse {
@@ -133,6 +133,9 @@ function createApi(customFetch: Fetch = fetch) {
 				del<{ deleted: number }>(`/api/highlights/${id}`),
 		},
 
+		search: (q: string, limit = 50) =>
+			get<SearchResult[]>(`/api/search?q=${encodeURIComponent(q)}&limit=${limit}`),
+
 		readingLog: {
 			list: (limit = 100) => get<ProgressEntry[]>(`/api/reading-log?limit=${limit}`),
 		},
@@ -145,5 +148,6 @@ function createApi(customFetch: Fetch = fetch) {
 	};
 }
 
+export type { HighlightWithMeta };
 export { createApi };
 export const api = createApi();

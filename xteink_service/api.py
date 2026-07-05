@@ -410,6 +410,78 @@ async def list_all_highlights(limit: int = 100):
         return []
 
 
+@router.get("/api/search")
+async def search(q: str = "", limit: int = 50):
+    """
+    Full-text search across book titles, OCR text, OCR corrections,
+    user notes, and highlights.
+    Returns screenshot rows with a 'match_fields' list and a 'snippet'.
+    """
+    if not q.strip():
+        return []
+
+    like = f"%{q}%"
+
+    try:
+        with _state_conn() as conn:
+            rows = conn.execute("""
+                SELECT DISTINCT s.*,
+                    GROUP_CONCAT(h.selected_text, '||') AS highlight_matches
+                FROM synced_screenshots s
+                LEFT JOIN highlights h ON h.screenshot_id = s.id
+                WHERE
+                    s.book_title    LIKE ? OR
+                    s.ocr_text      LIKE ? OR
+                    s.ocr_corrected LIKE ? OR
+                    s.user_notes    LIKE ? OR
+                    h.selected_text LIKE ?
+                GROUP BY s.id
+                ORDER BY s.book_title, s.sync_date, s.id
+                LIMIT ?
+            """, (like, like, like, like, like, limit)).fetchall()
+    except Exception:
+        return []
+
+    q_lower = q.lower()
+    results = []
+    for row in rows:
+        d = dict(row)
+        hl_raw = d.pop("highlight_matches", None) or ""
+        d["highlight_matches"] = [t for t in hl_raw.split("||") if t] if hl_raw else []
+
+        # Determine which fields matched
+        match_fields = []
+        if q_lower in (d.get("book_title") or "").lower():
+            match_fields.append("book_title")
+        if q_lower in (d.get("ocr_text") or "").lower():
+            match_fields.append("ocr_text")
+        if q_lower in (d.get("ocr_corrected") or "").lower():
+            match_fields.append("ocr_corrected")
+        if q_lower in (d.get("user_notes") or "").lower():
+            match_fields.append("user_notes")
+        if any(q_lower in h.lower() for h in d["highlight_matches"]):
+            match_fields.append("highlights")
+        d["match_fields"] = match_fields
+
+        # Extract a short snippet from the best matching text field
+        snippet = ""
+        for field in ("ocr_corrected", "ocr_text", "user_notes"):
+            text = d.get(field) or ""
+            idx = text.lower().find(q_lower)
+            if idx >= 0:
+                start = max(0, idx - 60)
+                end = min(len(text), idx + len(q) + 60)
+                snippet = ("…" if start > 0 else "") + text[start:end] + ("…" if end < len(text) else "")
+                break
+        if not snippet and d["highlight_matches"]:
+            snippet = d["highlight_matches"][0]
+        d["snippet"] = snippet
+
+        results.append(d)
+
+    return results
+
+
 @router.get("/api/screenshots/{screenshot_id}/highlights")
 async def list_highlights(screenshot_id: int):
     """Return all highlights for a screenshot."""

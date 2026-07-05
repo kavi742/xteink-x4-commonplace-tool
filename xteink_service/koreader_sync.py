@@ -23,7 +23,11 @@ from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
-app = FastAPI()
+app = FastAPI(title="xteink-service", version="1.0.0")
+
+# Mount Phase 8+9 API endpoints
+from xteink_service.api import router as api_router  # noqa: E402
+app.include_router(api_router)
 
 
 # ------------------------------------------------------------------ #
@@ -106,6 +110,32 @@ class ProgressStore:
 _store = ProgressStore(
     os.getenv("KOREADER_DB", "/tmp/koreader.db")
 )
+
+
+# ------------------------------------------------------------------ #
+# ntfy.sh notifications                                               #
+# ------------------------------------------------------------------ #
+
+def _notify(message: str, title: str = "xteink-service") -> None:
+    """
+    Send a push notification via ntfy.sh (or a self-hosted ntfy server).
+    Set NTFY_TOPIC env var to enable — silently skipped if not configured.
+    Example: NTFY_TOPIC=https://ntfy.sh/my-xteink-topic
+    """
+    topic = os.getenv("NTFY_TOPIC", "")
+    if not topic:
+        return
+    try:
+        import urllib.request
+        req = urllib.request.Request(
+            topic,
+            data=message.encode(),
+            headers={"Title": title, "Content-Type": "text/plain"},
+            method="POST",
+        )
+        urllib.request.urlopen(req, timeout=5)
+    except Exception as exc:
+        logger.debug("ntfy notification failed: %s", exc)
 
 
 # ------------------------------------------------------------------ #
@@ -209,6 +239,7 @@ async def _write_progress_to_vault(update: ProgressIn) -> None:
                                 progress=update.progress,
                                 first_today_pct=first_today_pct)
         logger.info("Vault: wrote progress for %s (%.1f%%)", title, pct)
+        _notify(f"Reading: {title} — {pct:.1f}%")
     except Exception as exc:
         logger.warning("Vault write failed for %s: %s", title, exc)
 

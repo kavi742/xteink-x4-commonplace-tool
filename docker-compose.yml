@@ -20,6 +20,8 @@ services:
       - VAULT_PATH=/data/vault
       - STATE_DB=/data/state/state.db
       - KOREADER_DB=/data/state/koreader.db
+      # Optional: set to your ntfy.sh topic URL to get push notifications
+      # - NTFY_TOPIC=https://ntfy.sh/your-topic-here
       - PUID=1000
       - PGID=1000
       - TZ=America/Toronto

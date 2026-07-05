@@ -1,0 +1,336 @@
+"""
+Phase 8 + 9 API endpoints.
+
+Mounted on the koreader_sync FastAPI app (port 8090):
+
+  GET  /status                         — service health snapshot
+  GET  /api/books                      — book list with screenshot counts
+  GET  /api/books/{slug}               — single book metadata
+  GET  /api/books/{slug}/screenshots   — screenshots for a book
+  GET  /api/screenshots/{id}           — single screenshot metadata
+  GET  /api/screenshots/{id}/image     — serve PNG from vault filesystem
+  PUT  /api/screenshots/{id}           — update ocr_corrected / user_notes
+  GET  /api/reading-log                — KOReader progress history (with titles)
+  GET  /api/aliases                    — hash → title table
+  PUT  /api/aliases/{hash}             — set/update a book title alias
+  POST /api/vault/rebuild              — rebuild all vault markdown from DB
+
+Requires STATE_DB, KOREADER_DB, VAULT_PATH env vars (defaulting to /data/*).
+"""
+import os
+import sqlite3
+from datetime import date, datetime, timezone
+from pathlib import Path
+
+from fastapi import APIRouter, HTTPException
+from fastapi.responses import FileResponse
+from pydantic import BaseModel
+
+router = APIRouter()
+
+# ------------------------------------------------------------------ #
+# Helpers                                                              #
+# ------------------------------------------------------------------ #
+
+def _state_db() -> str:
+    return os.getenv("STATE_DB", "/data/state/state.db")
+
+
+def _koreader_db() -> str:
+    return os.getenv("KOREADER_DB", "/data/state/koreader.db")
+
+
+def _vault_path() -> Path:
+    return Path(os.getenv("VAULT_PATH", "/data/vault"))
+
+
+def _state_conn() -> sqlite3.Connection:
+    conn = sqlite3.connect(_state_db())
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def _koreader_conn() -> sqlite3.Connection:
+    conn = sqlite3.connect(_koreader_db())
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+# ------------------------------------------------------------------ #
+# Phase 8 — /status                                                    #
+# ------------------------------------------------------------------ #
+
+@router.get("/status")
+async def status():
+    """Service health snapshot — last sync, book counts, recent KOReader updates."""
+    today = date.today().isoformat()
+    result: dict = {}
+
+    # Screenshot stats from state.db
+    try:
+        with _state_conn() as conn:
+            total = conn.execute(
+                "SELECT COUNT(*) FROM synced_screenshots"
+            ).fetchone()[0]
+            last_row = conn.execute(
+                "SELECT synced_at, book_title FROM synced_screenshots ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+            books_today = [
+                r[0] for r in conn.execute(
+                    "SELECT DISTINCT book_title FROM synced_screenshots WHERE sync_date = ?",
+                    (today,),
+                ).fetchall()
+            ]
+            today_count = conn.execute(
+                "SELECT COUNT(*) FROM synced_screenshots WHERE sync_date = ?",
+                (today,),
+            ).fetchone()[0]
+        result["screenshots"] = {
+            "total": total,
+            "last_sync_at": last_row["synced_at"] if last_row else None,
+            "last_book": last_row["book_title"] if last_row else None,
+            "today_count": today_count,
+            "books_today": books_today,
+        }
+    except Exception as exc:
+        result["screenshots"] = {"error": str(exc)}
+
+    # KOReader stats
+    try:
+        with _koreader_conn() as conn:
+            total_k = conn.execute(
+                "SELECT COUNT(*) FROM progress_updates"
+            ).fetchone()[0]
+            recent = conn.execute(
+                "SELECT document, percentage, timestamp FROM progress_updates ORDER BY id DESC LIMIT 5"
+            ).fetchall()
+        # Resolve hashes to titles
+        aliases: dict[str, str] = {}
+        try:
+            with _state_conn() as conn:
+                for row in conn.execute("SELECT hash, title FROM document_aliases"):
+                    aliases[row["hash"]] = row["title"]
+        except Exception:
+            pass
+        result["koreader"] = {
+            "total_updates": total_k,
+            "recent": [
+                {
+                    "document": r["document"],
+                    "title": aliases.get(r["document"], r["document"][:12] + "..."),
+                    "percentage": round(r["percentage"] * 100, 1),
+                    "at": datetime.fromtimestamp(r["timestamp"], tz=timezone.utc).isoformat(),
+                }
+                for r in recent
+            ],
+        }
+    except Exception as exc:
+        result["koreader"] = {"error": str(exc)}
+
+    return result
+
+
+# ------------------------------------------------------------------ #
+# Phase 9 — Books                                                      #
+# ------------------------------------------------------------------ #
+
+@router.get("/api/books")
+async def list_books():
+    """List all books with screenshot counts."""
+    with _state_conn() as conn:
+        rows = conn.execute("""
+            SELECT book_title,
+                   COUNT(*)        AS screenshot_count,
+                   MAX(synced_at)  AS last_synced,
+                   MAX(sync_date)  AS last_date
+            FROM synced_screenshots
+            GROUP BY book_title
+            ORDER BY book_title
+        """).fetchall()
+    return [dict(r) for r in rows]
+
+
+@router.get("/api/books/{slug}/screenshots")
+async def list_screenshots(slug: str):
+    """Screenshots for a book (matched by book_title or sanitised slug)."""
+    with _state_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM synced_screenshots WHERE book_title = ? ORDER BY id",
+            (slug,),
+        ).fetchall()
+    if not rows:
+        raise HTTPException(status_code=404, detail=f"Book '{slug}' not found")
+    return [dict(r) for r in rows]
+
+
+# ------------------------------------------------------------------ #
+# Phase 9 — Screenshots                                                #
+# ------------------------------------------------------------------ #
+
+@router.get("/api/screenshots/{screenshot_id}")
+async def get_screenshot(screenshot_id: int):
+    """Single screenshot metadata."""
+    with _state_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM synced_screenshots WHERE id = ?", (screenshot_id,)
+        ).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Screenshot not found")
+    return dict(row)
+
+
+@router.get("/api/screenshots/{screenshot_id}/image")
+async def get_screenshot_image(screenshot_id: int):
+    """Serve the PNG from the vault filesystem."""
+    with _state_conn() as conn:
+        row = conn.execute(
+            "SELECT vault_png_path FROM synced_screenshots WHERE id = ?",
+            (screenshot_id,),
+        ).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Screenshot not found")
+
+    vault_png_path = row["vault_png_path"]
+    if not vault_png_path:
+        raise HTTPException(status_code=404, detail="No vault path stored for this screenshot")
+
+    png = _vault_path() / "Books" / vault_png_path
+    if not png.exists():
+        raise HTTPException(status_code=404, detail=f"File not found on disk: {png}")
+
+    return FileResponse(str(png), media_type="image/png")
+
+
+class ScreenshotUpdate(BaseModel):
+    ocr_corrected: str | None = None
+    user_notes: str | None = None
+
+
+@router.put("/api/screenshots/{screenshot_id}")
+async def update_screenshot(screenshot_id: int, body: ScreenshotUpdate):
+    """Update OCR correction and/or user notes for a screenshot."""
+    fields, values = [], []
+    if body.ocr_corrected is not None:
+        fields.append("ocr_corrected = ?")
+        values.append(body.ocr_corrected)
+    if body.user_notes is not None:
+        fields.append("user_notes = ?")
+        values.append(body.user_notes)
+    if not fields:
+        raise HTTPException(status_code=400, detail="Provide ocr_corrected or user_notes")
+
+    values.append(screenshot_id)
+    with sqlite3.connect(_state_db()) as conn:
+        result = conn.execute(
+            f"UPDATE synced_screenshots SET {', '.join(fields)} WHERE id = ?",
+            values,
+        )
+        if result.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Screenshot not found")
+
+    return {"updated": screenshot_id}
+
+
+# ------------------------------------------------------------------ #
+# Phase 9 — Reading log                                               #
+# ------------------------------------------------------------------ #
+
+@router.get("/api/reading-log")
+async def reading_log(limit: int = 100):
+    """Recent KOReader progress updates with resolved titles."""
+    with _koreader_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM progress_updates ORDER BY id DESC LIMIT ?", (limit,)
+        ).fetchall()
+
+    aliases: dict[str, str] = {}
+    try:
+        with _state_conn() as conn:
+            for row in conn.execute("SELECT hash, title FROM document_aliases"):
+                aliases[row["hash"]] = row["title"]
+    except Exception:
+        pass
+
+    return [
+        {
+            **dict(r),
+            "title_resolved": aliases.get(r["document"]),
+            "percentage_display": round(r["percentage"] * 100, 1),
+            "at": datetime.fromtimestamp(r["timestamp"], tz=timezone.utc).isoformat(),
+        }
+        for r in rows
+    ]
+
+
+# ------------------------------------------------------------------ #
+# Phase 9 — Aliases                                                   #
+# ------------------------------------------------------------------ #
+
+@router.get("/api/aliases")
+async def list_aliases():
+    """All document hash → title mappings."""
+    with _state_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM document_aliases ORDER BY title"
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+class AliasBody(BaseModel):
+    title: str
+    filename: str = ""
+
+
+@router.put("/api/aliases/{doc_hash}")
+async def set_alias(doc_hash: str, body: AliasBody):
+    """Create or update a hash → title mapping."""
+    with sqlite3.connect(_state_db()) as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO document_aliases "
+            "(hash, title, filename, resolved_by, computed_at) VALUES (?,?,?,'manual',?)",
+            (doc_hash, body.title, body.filename,
+             datetime.now(timezone.utc).isoformat()),
+        )
+    return {"hash": doc_hash, "title": body.title}
+
+
+# ------------------------------------------------------------------ #
+# Phase 9 — Vault rebuild                                             #
+# ------------------------------------------------------------------ #
+
+@router.post("/api/vault/rebuild")
+async def rebuild_vault():
+    """
+    Rebuild all vault markdown from the state DB.
+    Useful after vault corruption or to apply format changes to old notes.
+    """
+    from xteink_service.vault_writer import VaultWriter
+    from datetime import date as DateType
+
+    vault = _vault_path()
+    vw = VaultWriter(str(vault))
+    rebuilt = 0
+
+    with _state_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM synced_screenshots ORDER BY book_title, sync_date, id"
+        ).fetchall()
+
+    for row in rows:
+        row = dict(row)
+        book_title = row["book_title"] or "Unknown"
+        sync_date  = row["sync_date"] or date.today().isoformat()
+        embed_path = row["vault_png_path"] or ""
+        ocr_text   = row["ocr_corrected"] or row["ocr_text"]
+
+        if not embed_path:
+            continue
+
+        try:
+            day = DateType.fromisoformat(sync_date)
+            vw.append_to_daily_note(book_title, day, embed_path, ocr_text)
+            rebuilt += 1
+        except Exception:
+            pass
+
+    return {"rebuilt_notes": rebuilt}

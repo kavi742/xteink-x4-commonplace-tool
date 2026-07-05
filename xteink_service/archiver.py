@@ -72,7 +72,8 @@ class ScreenshotArchiver:
                     )
                     self._vault.append_to_daily_note(book, day, embed, ocr_text)
                     self._state.mark_synced(
-                        filepath, content_hash, book, day.isoformat(), ocr_text
+                        filepath, content_hash, book, day.isoformat(), ocr_text,
+                        vault_png_path=embed,
                     )
 
                     book_counts[book] = book_counts.get(book, 0) + 1
@@ -84,6 +85,23 @@ class ScreenshotArchiver:
                     f"{count} from {book[:12]}" for book, count in book_counts.items()
                 ) + "  DONE"
                 await show(summary)
+                # ntfy notification
+                if book_counts:
+                    try:
+                        import urllib.request, os
+                        topic = os.getenv("NTFY_TOPIC", "")
+                        if topic:
+                            msg = "Synced: " + ", ".join(
+                                f"{c} from {b}" for b, c in book_counts.items()
+                            )
+                            req = urllib.request.Request(
+                                topic, data=msg.encode(),
+                                headers={"Title": "xteink screenshot sync", "Content-Type": "text/plain"},
+                                method="POST",
+                            )
+                            urllib.request.urlopen(req, timeout=5)
+                    except Exception:
+                        pass
                 await asyncio.sleep(30)  # hold until user disconnects
 
     # ------------------------------------------------------------------ #

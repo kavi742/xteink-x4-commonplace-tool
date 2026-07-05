@@ -13,16 +13,29 @@ class SyncState:
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS synced_screenshots (
-                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-                    device_path  TEXT    NOT NULL,
-                    content_hash TEXT    NOT NULL,
-                    synced_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    book_title   TEXT    DEFAULT '',
-                    sync_date    TEXT    DEFAULT '',
-                    ocr_text     TEXT,
+                    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                    device_path    TEXT    NOT NULL,
+                    content_hash   TEXT    NOT NULL,
+                    synced_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    book_title     TEXT    DEFAULT '',
+                    sync_date      TEXT    DEFAULT '',
+                    ocr_text       TEXT,
+                    vault_png_path TEXT    DEFAULT '',
+                    ocr_corrected  TEXT,
+                    user_notes     TEXT,
                     UNIQUE(device_path, content_hash)
                 )
             """)
+            # Migrate existing DBs that predate the new columns
+            for col, typedef in [
+                ("vault_png_path", "TEXT DEFAULT ''"),
+                ("ocr_corrected",  "TEXT"),
+                ("user_notes",     "TEXT"),
+            ]:
+                try:
+                    conn.execute(f"ALTER TABLE synced_screenshots ADD COLUMN {col} {typedef}")
+                except Exception:
+                    pass  # column already exists
             # document_aliases populated in Phase 6b
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS document_aliases (
@@ -64,14 +77,67 @@ class SyncState:
         book_title: str = "",
         sync_date: str = "",
         ocr_text: str | None = None,
+        vault_png_path: str = "",
     ) -> None:
         with sqlite3.connect(self.db_path) as conn:
             conn.execute(
                 "INSERT OR IGNORE INTO synced_screenshots "
-                "(device_path, content_hash, book_title, sync_date, ocr_text) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (device_path, content_hash, book_title, sync_date, ocr_text),
+                "(device_path, content_hash, book_title, sync_date, ocr_text, vault_png_path) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (device_path, content_hash, book_title, sync_date, ocr_text, vault_png_path),
             )
+
+    def get_screenshot(self, screenshot_id: int) -> dict | None:
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT * FROM synced_screenshots WHERE id = ?", (screenshot_id,)
+            ).fetchone()
+        return dict(row) if row else None
+
+    def update_screenshot(
+        self,
+        screenshot_id: int,
+        ocr_corrected: str | None = None,
+        user_notes: str | None = None,
+    ) -> None:
+        fields, values = [], []
+        if ocr_corrected is not None:
+            fields.append("ocr_corrected = ?")
+            values.append(ocr_corrected)
+        if user_notes is not None:
+            fields.append("user_notes = ?")
+            values.append(user_notes)
+        if not fields:
+            return
+        values.append(screenshot_id)
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                f"UPDATE synced_screenshots SET {', '.join(fields)} WHERE id = ?",
+                values,
+            )
+
+    def list_books(self) -> list[dict]:
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute("""
+                SELECT book_title,
+                       COUNT(*) as screenshot_count,
+                       MAX(synced_at) as last_synced
+                FROM synced_screenshots
+                GROUP BY book_title
+                ORDER BY book_title
+            """).fetchall()
+        return [dict(r) for r in rows]
+
+    def list_screenshots(self, book_title: str) -> list[dict]:
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT * FROM synced_screenshots WHERE book_title = ? ORDER BY id",
+                (book_title,),
+            ).fetchall()
+        return [dict(r) for r in rows]
 
     # ------------------------------------------------------------------ #
     # Document alias lookup                                                #

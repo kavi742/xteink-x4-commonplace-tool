@@ -1,17 +1,26 @@
 <script lang="ts">
 	import '../styles/app.css';
 	import { page } from '$app/state';
+	import { onMount } from 'svelte';
 	import { panel } from '$lib/panel.svelte';
+	import { api } from '$lib/api';
+	import type { HighlightWithMeta } from '$lib/api';
 	import ScreenshotPanel from '$lib/components/ScreenshotPanel.svelte';
 	import StatusWidget from '$lib/components/StatusWidget.svelte';
 
 	let { children, data } = $props();
 	let { books } = $derived(data);
+	let recentHighlights = $state<HighlightWithMeta[]>([]);
+
+	onMount(async () => {
+		recentHighlights = await api.highlights.listAll(5).catch(() => []);
+	});
 
 	const navLinks = [
-		{ href: '/books',   label: 'Books' },
-		{ href: '/log',     label: 'Reading Log' },
-		{ href: '/aliases', label: 'Aliases' },
+		{ href: '/books',      label: 'Books' },
+		{ href: '/log',        label: 'Reading Log' },
+		{ href: '/highlights', label: 'Highlights' },
+		{ href: '/aliases',    label: 'Aliases' },
 	];
 
 	function isActive(href: string) {
@@ -46,6 +55,23 @@
 					</li>
 				{/each}
 			</ul>
+
+			{#if recentHighlights.length > 0}
+				<p class="section-label" style="margin-top:1rem">Recent highlights</p>
+				<div style="display:flex;flex-direction:column;gap:4px">
+					{#each recentHighlights as h}
+						<button
+							class="sidebar-highlight"
+							onclick={() => panel.open(h.screenshot_id, [])}
+							title={h.book_title}
+						>
+							<mark class="sidebar-mark">{h.selected_text.slice(0, 60)}{h.selected_text.length > 60 ? '…' : ''}</mark>
+							<span class="sidebar-hl-book">{h.book_title}</span>
+						</button>
+					{/each}
+					<a href="/highlights" style="font-size:11px;color:var(--text-muted);padding:.2rem .5rem">All highlights →</a>
+				</div>
+			{/if}
 		</div>
 	</aside>
 

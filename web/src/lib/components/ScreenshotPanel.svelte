@@ -7,6 +7,12 @@
 	let saving = $state(false);
 	let selectedText = $state('');
 	let highlighting = $state(false);
+	let imgNatW = $state(0);
+	let imgNatH = $state(0);
+
+	function parseBboxes(json: string): {x:number,y:number,w:number,h:number}[] {
+		try { return JSON.parse(json) ?? []; } catch { return []; }
+	}
 
 	$effect(() => {
 		if (panel.id === null) { shot = null; highlights = []; return; }
@@ -74,8 +80,32 @@
 	{#if !shot}
 		<p style="color:var(--text-muted);font-size:13px">Loading…</p>
 	{:else}
-		<div class="panel-image">
-			<img src={api.screenshots.imageUrl(shot.id)} alt="" />
+		<div class="panel-image" style="position:relative">
+			<img
+				src={api.screenshots.imageUrl(shot.id)}
+				alt=""
+				bind:naturalWidth={imgNatW}
+				bind:naturalHeight={imgNatH}
+				style="display:block;width:100%"
+			/>
+			{#if imgNatW > 0 && highlights.some(h => h.bbox_json && h.bbox_json !== '[]')}
+				<svg
+					viewBox="0 0 {imgNatW} {imgNatH}"
+					style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none"
+				>
+					{#each highlights as h}
+						{#each parseBboxes(h.bbox_json) as box}
+							<rect
+								x={box.x} y={box.y} width={box.w} height={box.h}
+								fill="rgba(255,235,59,0.35)"
+								stroke="rgba(220,160,0,0.8)"
+								stroke-width="1.5"
+								rx="2"
+							/>
+						{/each}
+					{/each}
+				</svg>
+			{/if}
 		</div>
 
 		<p class="panel-meta">

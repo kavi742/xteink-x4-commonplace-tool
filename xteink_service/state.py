@@ -31,6 +31,9 @@ class SyncState:
                     id             INTEGER PRIMARY KEY AUTOINCREMENT,
                     screenshot_id  INTEGER NOT NULL,
                     selected_text  TEXT    NOT NULL,
+                    bbox_json      TEXT    DEFAULT '[]',
+                    img_w          INTEGER DEFAULT 0,
+                    img_h          INTEGER DEFAULT 0,
                     created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY(screenshot_id) REFERENCES synced_screenshots(id)
                 )
@@ -165,12 +168,26 @@ class SyncState:
     # Highlights                                                           #
     # ------------------------------------------------------------------ #
 
-    def add_highlight(self, screenshot_id: int, selected_text: str) -> dict:
+    def add_highlight(
+        self,
+        screenshot_id: int,
+        selected_text: str,
+        bbox_json: str = "[]",
+        img_w: int = 0,
+        img_h: int = 0,
+    ) -> dict:
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
+            # Migrate column if needed
+            try:
+                conn.execute("ALTER TABLE highlights ADD COLUMN bbox_json TEXT DEFAULT '[]'")
+                conn.execute("ALTER TABLE highlights ADD COLUMN img_w INTEGER DEFAULT 0")
+                conn.execute("ALTER TABLE highlights ADD COLUMN img_h INTEGER DEFAULT 0")
+            except Exception:
+                pass
             cur = conn.execute(
-                "INSERT INTO highlights (screenshot_id, selected_text) VALUES (?, ?)",
-                (screenshot_id, selected_text),
+                "INSERT INTO highlights (screenshot_id, selected_text, bbox_json, img_w, img_h) VALUES (?, ?, ?, ?, ?)",
+                (screenshot_id, selected_text, bbox_json, img_w, img_h),
             )
             row = conn.execute(
                 "SELECT * FROM highlights WHERE id = ?", (cur.lastrowid,)

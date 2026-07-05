@@ -351,6 +351,65 @@ class HighlightIn(BaseModel):
     selected_text: str
 
 
+def _find_text_bboxes(png_path: Path, search_text: str) -> tuple[list[dict], int, int]:
+    """Return bboxes for words matching search_text."""
+    try:
+        import re as _re, pytesseract
+        from PIL import Image
+        from itertools import groupby
+        img = Image.open(png_path)
+        img_w, img_h = img.size
+        data = pytesseract.image_to_data(img, output_type=pytesseract.Output.DICT)
+        words = [
+            {"word": data["text"][i].strip(), "x": data["left"][i], "y": data["top"][i],
+             "w": data["width"][i], "h": data["height"][i]}
+            for i in range(len(data["text"]))
+            if data["text"][i].strip() and int(data["conf"][i]) > 20
+        ]
+        def norm(s): return _re.sub(r"[^\w]", "", s).lower()
+        sw = [norm(w) for w in search_text.split() if norm(w)]
+        if not sw: return [], img_w, img_h
+        bboxes: list[dict] = []
+        for attempt in (len(sw), min(3, len(sw))):
+            if attempt < 1: continue
+            tgt = sw[:attempt]
+            for i in range(len(words) - attempt + 1):
+                if [norm(words[i+j]["word"]) for j in range(attempt)] == tgt:
+                    bboxes = [{"x": words[i+j]["x"], "y": words[i+j]["y"],
+                               "w": words[i+j]["w"], "h": words[i+j]["h"]} for j in range(attempt)]
+                    break
+            if bboxes: break
+        if bboxes:
+            merged = []
+            for _, g in groupby(sorted(bboxes, key=lambda b: b["y"]), key=lambda b: b["y"]):
+                ln = list(g)
+                merged.append({"x": min(b["x"] for b in ln), "y": ln[0]["y"],
+                               "w": max(b["x"]+b["w"] for b in ln)-min(b["x"] for b in ln),
+                               "h": max(b["h"] for b in ln)})
+            bboxes = merged
+        return bboxes, img_w, img_h
+    except Exception:
+        return [], 0, 0
+
+
+@router.get("/api/highlights")
+async def list_all_highlights(limit: int = 100):
+    """All highlights across all books with screenshot metadata."""
+    try:
+        with _state_conn() as conn:
+            rows = conn.execute('''
+                SELECT h.id, h.screenshot_id, h.selected_text,
+                       h.bbox_json, h.img_w, h.img_h, h.created_at,
+                       s.book_title, s.sync_date, s.vault_png_path
+                FROM highlights h
+                JOIN synced_screenshots s ON s.id = h.screenshot_id
+                ORDER BY h.id DESC LIMIT ?
+            ''', (limit,)).fetchall()
+        return [dict(r) for r in rows]
+    except Exception:
+        return []
+
+
 @router.get("/api/screenshots/{screenshot_id}/highlights")
 async def list_highlights(screenshot_id: int):
     """Return all highlights for a screenshot."""

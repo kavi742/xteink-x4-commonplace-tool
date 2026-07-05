@@ -45,7 +45,16 @@ export interface Highlight {
 	id: number;
 	screenshot_id: number;
 	selected_text: string;
+	bbox_json: string;
+	img_w: number;
+	img_h: number;
 	created_at: string;
+}
+
+export interface HighlightWithMeta extends Highlight {
+	book_title: string;
+	sync_date: string;
+	vault_png_path: string;
 }
 
 export interface StatusResponse {
@@ -116,6 +125,8 @@ function createApi(customFetch: Fetch = fetch) {
 		highlights: {
 			list: (screenshotId: number) =>
 				get<Highlight[]>(`/api/screenshots/${screenshotId}/highlights`),
+			listAll: (limit = 100) =>
+				get<HighlightWithMeta[]>(`/api/highlights?limit=${limit}`),
 			create: (screenshotId: number, selectedText: string) =>
 				post<Highlight>(`/api/screenshots/${screenshotId}/highlights`, { selected_text: selectedText }),
 			delete: (id: number) =>

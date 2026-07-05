@@ -170,3 +170,13 @@ KOReader sync data (Phase 5) and screenshot data (Phase 6) both feed this.
       Web UI already uses `adapter-static` (required). Steps: `npm install @capacitor/core @capacitor/cli @capacitor/android`,
       `npx cap init`, `npx cap add android`, `npx cap sync`, `npx cap run android`.
       Note: all API calls must point to the homelab (Tailscale IP or local) — configure base URL via env at build time.
+      The Docker container is unaffected — Android is purely a client-side wrapper; the server stays as-is.
+- [ ] **Local Jenkins CI/CD for Android builds** — Jenkins pipeline on the homelab that watches the repo
+      and rebuilds the APK whenever `web/` changes. No Docker changes needed (Jenkins runs outside the container).
+      Pipeline stages:
+      1. `git pull` — detect web UI changes
+      2. `cd web && npm ci && npm run build` — rebuild static assets
+      3. `npx cap sync android` — copy `web/build/` into the Android project
+      4. `./gradlew assembleRelease` — compile APK (requires Android SDK on Jenkins agent)
+      5. Publish APK as a Jenkins artifact or push to a shared folder for sideloading
+      Jenkins trigger: GitHub webhook or poll SCM on `web/**` path filter.

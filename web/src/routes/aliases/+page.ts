@@ -1,5 +1,8 @@
 import { api } from '$lib/api';
 export async function load() {
-	const aliases = await api.aliases.list().catch(() => []);
-	return { aliases };
+	const [aliases, unresolved] = await Promise.all([
+		api.aliases.list().catch(() => []),
+		api.aliases.listUnresolved().catch(() => []),
+	]);
+	return { aliases, unresolved };
 }

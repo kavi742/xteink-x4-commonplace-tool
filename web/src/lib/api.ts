@@ -152,8 +152,12 @@ function createApi(customFetch: Fetch = fetch) {
 				del<{ deleted: number }>(`/api/highlights/${id}`),
 		},
 
-		search: (q: string, limit = 50) =>
-			get<SearchResult[]>(`/api/search?q=${encodeURIComponent(q)}&limit=${limit}`),
+		search: (q: string, limit = 50, notesOnly = false) => {
+			const params = new URLSearchParams({ limit: String(limit) });
+			if (q.trim()) params.set('q', q);
+			if (notesOnly) params.set('notes_only', '1');
+			return get<SearchResult[]>(`/api/search?${params}`);
+		},
 
 		tbr: {
 			list: () => get<TbrBook[]>('/api/tbr'),
@@ -172,6 +176,7 @@ function createApi(customFetch: Fetch = fetch) {
 
 		aliases: {
 			list: () => get<Alias[]>('/api/aliases'),
+			listUnresolved: () => get<{document:string; percentage_display:number; last_seen:number}[]>('/api/aliases/unresolved'),
 			set: (hash: string, title: string, filename = '') =>
 				put<Alias>(`/api/aliases/${hash}`, { title, filename }),
 		},

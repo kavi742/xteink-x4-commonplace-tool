@@ -286,6 +286,32 @@ async def list_aliases():
     return [dict(r) for r in rows]
 
 
+@router.get("/api/aliases/unresolved")
+async def list_unresolved_aliases():
+    """Hashes seen in the KOReader reading log that have no title mapping yet."""
+    try:
+        mapped: set[str] = set()
+        with _state_conn() as conn:
+            for row in conn.execute("SELECT hash FROM document_aliases"):
+                mapped.add(row["hash"])
+        with _koreader_conn() as conn:
+            rows = conn.execute(
+                "SELECT DISTINCT document, MAX(percentage) as pct, MAX(timestamp) as last_seen "
+                "FROM progress_updates GROUP BY document ORDER BY last_seen DESC"
+            ).fetchall()
+        return [
+            {
+                "document": r["document"],
+                "percentage_display": round(r["pct"] * 100, 1),
+                "last_seen": r["last_seen"],
+            }
+            for r in rows
+            if r["document"] not in mapped
+        ]
+    except Exception:
+        return []
+
+
 class AliasBody(BaseModel):
     title: str
     filename: str = ""
@@ -414,12 +440,38 @@ async def list_all_highlights(limit: int = 100):
 
 
 @router.get("/api/search")
-async def search(q: str = "", limit: int = 50):
+async def search(q: str = "", limit: int = 50, notes_only: bool = False):
     """
     Full-text search across book titles, OCR text, OCR corrections,
-    user notes, and highlights.
-    Returns screenshot rows with a 'match_fields' list and a 'snippet'.
+    user notes, and highlights. Pass notes_only=1 to show only screenshots
+    that have user notes set.
     """
+    if notes_only:
+        # Return all screenshots with non-empty user_notes
+        try:
+            with _state_conn() as conn:
+                rows = conn.execute("""
+                    SELECT s.*,
+                        GROUP_CONCAT(h.selected_text, '||') AS highlight_matches
+                    FROM synced_screenshots s
+                    LEFT JOIN highlights h ON h.screenshot_id = s.id
+                    WHERE s.user_notes IS NOT NULL AND s.user_notes != ''
+                    GROUP BY s.id
+                    ORDER BY s.book_title, s.sync_date, s.id
+                    LIMIT ?
+                """, (limit,)).fetchall()
+        except Exception:
+            return []
+        results = []
+        for row in rows:
+            d = dict(row)
+            hl_raw = d.pop("highlight_matches", None) or ""
+            d["highlight_matches"] = [t for t in hl_raw.split("||") if t] if hl_raw else []
+            d["match_fields"] = ["user_notes"]
+            d["snippet"] = (d.get("user_notes") or "")[:160]
+            results.append(d)
+        return results
+
     if not q.strip():
         return []
 

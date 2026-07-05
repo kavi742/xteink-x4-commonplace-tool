@@ -9,12 +9,13 @@
 	let results = $state<SearchResult[]>(data.results);
 	let loading = $state(false);
 
-	// Sync when data changes (e.g. sidebar search navigates to /search while already on /search)
 	$effect(() => {
 		q = data.q;
 		results = data.results;
 		loading = false;
 	});
+
+	const title = $derived(data.notesOnly ? 'With notes' : (data.q ? `"${data.q}"` : ''));
 
 	const FIELD_LABELS: Record<string, string> = {
 		book_title: 'Title',
@@ -49,6 +50,7 @@
 
 <svelte:head><title>Search — xteink</title></svelte:head>
 
+{#if !data.notesOnly}
 <div style="display:flex;gap:.5rem;margin-bottom:1.5rem;align-items:center">
 	<input
 		type="text"
@@ -61,13 +63,19 @@
 		{loading ? 'Searching…' : 'Search'}
 	</button>
 </div>
+{:else}
+	<div style="display:flex;align-items:center;gap:.75rem;margin-bottom:1.5rem">
+		<h1 class="page-title" style="margin-bottom:0">📝 With notes</h1>
+		<a href="/books" style="font-size:12px;color:var(--text-muted)">← all books</a>
+	</div>
+{/if}
 
-{#if data.q && !loading}
+{#if (data.q || data.notesOnly) && !loading}
 	{#if results.length === 0}
-		<p class="empty">No results for "{data.q}"</p>
+		<p class="empty">No results{data.notesOnly ? ' — no screenshots with notes yet.' : ` for "${data.q}"`}</p>
 	{:else}
 		<p style="font-size:12px;color:var(--text-muted);margin-bottom:1rem">
-			{results.length} result{results.length === 1 ? '' : 's'} for "{data.q}"
+			{results.length} result{results.length === 1 ? '' : 's'}{title ? ` for ${title}` : ''}
 		</p>
 		<div style="display:flex;flex-direction:column;gap:.75rem">
 			{#each results as r}

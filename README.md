@@ -91,6 +91,48 @@ Away from home? Install Tailscale on both the X4 and the server, then set `DEVIC
 
 New books appear in the reading log after the first File Transfer session (when the service can scan the device file listing to map book hashes to titles).
 
+## Syncthing Setup
+
+Syncthing syncs the vault folder from the homelab to Obsidian on your laptop or phone. This is a one-time manual setup.
+
+### 1. Install Syncthing
+
+On the homelab server (Debian):
+```bash
+apt install syncthing
+systemctl enable --now syncthing@$USER
+```
+Access the web UI at `http://homelab-ip:8384`.
+
+On your laptop/phone, install Syncthing from [syncthing.net](https://syncthing.net/downloads/).
+
+### 2. Share the vault folder
+
+In the homelab Syncthing web UI:
+1. **Add Device** — paste your laptop/phone's Syncthing device ID
+2. **Add Folder** — point it at the vault path (`/srv/docker/data/syncthing/shares/xteink-vault`)
+3. Share the folder with the laptop/phone device
+
+On the laptop/phone: accept the incoming share, choose where to store it locally.
+
+### 3. Point Obsidian at the synced folder
+
+Open Obsidian → **Open folder as vault** → select the locally synced vault directory.
+
+### 4. Ignore temporary files
+
+The vault init script writes `.stignore` into the vault automatically. If you need to add it manually:
+```
+// .stignore
+(?d).obsidian/workspace*
+(?d).obsidian/cache
+(?d).trash
+```
+
+### Tailscale (away from home)
+
+To sync while away from your home network, install Tailscale on both the homelab and your laptop/phone. Syncthing will route through Tailscale automatically when on the same Tailnet.
+
 ## Running Without Docker
 
 ```bash

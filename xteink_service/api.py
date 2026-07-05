@@ -16,6 +16,7 @@ Mounted on the koreader_sync FastAPI app (port 8090):
 
 Requires STATE_DB, KOREADER_DB, VAULT_PATH env vars (defaulting to /data/*).
 """
+import logging
 import os
 import sqlite3
 from datetime import date, datetime, timezone
@@ -25,6 +26,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 # ------------------------------------------------------------------ #
@@ -238,6 +240,7 @@ async def update_screenshot(screenshot_id: int, body: ScreenshotUpdate):
         if result.rowcount == 0:
             raise HTTPException(status_code=404, detail="Screenshot not found")
 
+    logger.info("Updated screenshot %d: %s", screenshot_id, ', '.join(fields))
     return {"updated": screenshot_id}
 
 
@@ -327,6 +330,7 @@ async def set_alias(doc_hash: str, body: AliasBody):
             (doc_hash, body.title, body.filename,
              datetime.now(timezone.utc).isoformat()),
         )
+    logger.info("Alias set: %s → %s", doc_hash[:12], body.title)
     return {"hash": doc_hash, "title": body.title}
 
 
@@ -577,6 +581,7 @@ async def create_highlight(screenshot_id: int, body: HighlightIn):
         screenshot_id, body.selected_text,
         bbox_json=bbox_json, img_w=img_w, img_h=img_h,
     )
+    logger.info("Highlight created: screenshot %d — %.40s", screenshot_id, body.selected_text)
 
     # Write ==text== into the vault book note
     vault = _vault_path()
@@ -608,6 +613,7 @@ async def delete_highlight(highlight_id: int):
     state = SyncState(_state_db())
     if not state.delete_highlight(highlight_id):
         raise HTTPException(status_code=404, detail="Highlight not found")
+    logger.info("Highlight deleted: %d", highlight_id)
     return {"deleted": highlight_id}
 
 
@@ -711,6 +717,7 @@ async def add_tbr(body: TbrBookIn):
             (body.title, body.author, body.source_url, body.notes),
         )
         row = conn.execute("SELECT * FROM tbr_books WHERE id = ?", (cur.lastrowid,)).fetchone()
+    logger.info("TBR added: %s", body.title)
     return dict(row)
 
 

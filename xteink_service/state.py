@@ -1,5 +1,8 @@
 import hashlib
+import logging
 import sqlite3
+
+logger = logging.getLogger(__name__)
 
 
 class SyncState:
@@ -11,6 +14,7 @@ class SyncState:
 
     def _init_db(self) -> None:
         with sqlite3.connect(self.db_path) as conn:
+            logger.debug("Initialising DB at %s", self.db_path)
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS synced_screenshots (
                     id             INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -110,6 +114,7 @@ class SyncState:
                 "VALUES (?, ?, ?, ?, ?, ?)",
                 (device_path, content_hash, book_title, sync_date, ocr_text, vault_png_path),
             )
+        logger.debug("Marked synced: %s", device_path.split('/')[-1])
 
     def get_screenshot(self, screenshot_id: int) -> dict | None:
         with sqlite3.connect(self.db_path) as conn:

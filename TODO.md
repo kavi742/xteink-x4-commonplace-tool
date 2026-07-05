@@ -103,7 +103,7 @@ Write KOReader reading progress into the vault alongside screenshots.
 - [x] Implement ntfy.sh notifications
 - [x] Create FastAPI JSON status endpoint (`/status`)
 - [x] Display: last sync time, books touched today, total screenshots, recent KOReader updates
-- [ ] Add logging throughout all components
+- [x] Add logging throughout all components (`logger = logging.getLogger(__name__)` in all modules)
 
 ## Phase 9: Full Data Store + CRUD API + Web UI
 
@@ -125,31 +125,44 @@ KOReader sync data (Phase 5) and screenshot data (Phase 6) both feed this.
 - [x] `GET /api/reading-log` — KOReader progress history
 - [x] `POST /api/vault/rebuild` — rebuild all vault markdown from DB
 - [x] `GET/PUT /api/aliases` — hash → title management
+- [x] `GET /api/aliases/unresolved` — hashes with no title mapping
+- [x] `GET /api/search?q=&notes_only=` — full-text search across OCR, notes, highlights
+- [x] `GET/POST/PUT/DELETE /api/tbr` — TBR list CRUD
+- [x] `GET /api/tbr/search?q=` — Open Library book search (no API key)
+- [x] `GET/POST/DELETE /api/screenshots/{id}/highlights` — text highlights with Tesseract bboxes
+- [x] `GET /api/highlights` — all highlights with screenshot metadata
 
-### Web frontend
-Single HTML file at `/app`. Vanilla JS + `fetch()`, no build step, no framework.
-
-- [ ] Book list + screenshot gallery (SvelteKit, `/books`)
-- [ ] Screenshot detail panel (full image, OCR edit, notes)
-- [ ] Reading log tab (`/log`)
-- [ ] Alias management table (`/aliases`)
-- [ ] TBR list (`/tbr`)
-- [ ] Essay per day (`/essays`) — fetch, convert to EPUB, push to X4
+### Web UI (SvelteKit, `/app`)
+- [x] Book list + screenshot masonry gallery (`/books`)
+- [x] Screenshot detail panel — full image, SVG highlight overlay, OCR edit, notes, prev/next
+- [x] Text highlighting — select passage → stored in DB → ==text== in Obsidian + Tesseract bbox overlay
+- [x] Reading log tab (`/log`) with section markers
+- [x] Alias management table (`/aliases`) with unresolved hashes section
+- [x] TBR list (`/tbr`) — status cycling, Open Library search, done section
+- [x] Highlights page (`/highlights`) — all highlights grouped by book
+- [x] Search (`/search`) — full-text + notes-only filter
+- [x] Sidebar: home link, book index, recent highlights, notes filter chip
+- [x] Per-book search bar (client-side filter on OCR/notes)
+- [ ] Essay per day (`/essays`) — fetch from source, convert to EPUB, push to X4
 
 ## Phase 10: Integration & Polish
 
 - [x] Wire all components together in `main.py` + `__main__.py`
 - [x] `python -m xteink_service` starts both KOReader sync server + watcher loop
-- [ ] Deployment docs (README updated; homelab-specific Syncthing setup)
-- [x] Unit tests for all core modules (59 tests passing)
-- [x] Live end-to-end tested on homelab hardware (25 screenshots, KOReader sync)
+- [x] Deployment docs (README updated with full Syncthing setup section)
+- [x] Unit tests — 84 passing (Python) + 12 passing (Vitest web)
+- [x] Live end-to-end tested on homelab hardware (25+ screenshots, KOReader sync, highlights)
 
-## Known Issues to Watch For
+## Known Issues / Watch For
 
-- [ ] mDNS resolution (`crosspoint.local`) may fail in Docker without `network_mode: host`
-- [ ] File Transfer mode times out after idle minutes — poll window is small
-- [ ] WebSocket connection may drop — need to handle reconnects
-- [ ] Book titles with special characters need sanitization for filenames
-- [ ] FAT filesystem timestamps may not be reliable — use current time as fallback
-- [ ] OCR accuracy varies with e‑ink font rendering and illustrations —
-      treat it as a best‑effort search aid, not an authoritative transcript
+- [x] mDNS resolution — handled via `network_mode: host` in Docker
+- [x] Book titles with special characters — handled via `_sanitize()`
+- [x] FAT filesystem timestamps — current time used as fallback
+- [ ] File Transfer mode times out after idle minutes — reconnect not automatic
+- [ ] WebSocket status display may drop — graceful fallback in place, reconnect not implemented
+- [ ] OCR accuracy varies with e-ink fonts and illustrations — best-effort, not authoritative
+
+## What's Next
+
+- [ ] **Essay per day** — fetch essay from web source, convert to EPUB (pandoc/ebooklib),
+      push to X4 via Calibre Wireless upload. Web UI at `/essays` with source picker and queue.

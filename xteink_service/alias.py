@@ -223,6 +223,48 @@ async def _scan_resolve(state_db: str, koreader_db: str, device_host: str) -> No
             print(f"  Still unresolved: {h}  (map manually or try --auto)")
 
 
+async def _preload_all_aliases(state_db: str, device_host: str) -> None:
+    """
+    Proactively map md5(filename) → title for EVERY epub on the device.
+    Called during File Transfer mode (port 80 open) so that the first
+    KOReader sync for any book writes the vault immediately — no lag.
+    Skips filenames already in document_aliases.
+    """
+    import hashlib
+
+    timeout = aiohttp.ClientTimeout(total=30)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        try:
+            books = await _list_device_books(session, device_host)
+        except Exception as exc:
+            print(f"  warn: preload scan failed: {exc}")
+            return
+
+    if not books:
+        return
+
+    sconn = _state_conn(state_db)
+    existing = {
+        r[0] for r in sconn.execute("SELECT hash FROM document_aliases").fetchall()
+    }
+
+    added = 0
+    for book in books:
+        name = book["name"]
+        h = hashlib.md5(name.encode()).hexdigest()
+        if h not in existing:
+            title = name.rsplit(".", 1)[0]
+            sconn.execute(
+                "INSERT OR IGNORE INTO document_aliases "
+                "(hash, title, filename, resolved_by, computed_at) VALUES (?,?,?,'auto',?)",
+                (h, title, name, datetime.now(timezone.utc).isoformat()),
+            )
+            added += 1
+    sconn.commit()
+    if added:
+        print(f"  Pre-loaded {added} alias(es) from device file listing")
+
+
 async def _auto_resolve(state_db: str, koreader_db: str, device_host: str) -> None:
     import hashlib
 

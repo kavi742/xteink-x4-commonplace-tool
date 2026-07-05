@@ -20,13 +20,15 @@ async def main(host: str, vault: str, state_db: str) -> None:
     archiver = ScreenshotArchiver(vault, host, state_db)
     await archiver.run_sync()
 
-    # Resolve any unresolved KOReader hashes while the device is reachable.
-    # KOReader sync fires in normal reading mode when port 80 is closed; this
-    # File Transfer session is the only time /api/files is available.
+    # Proactively map every epub filename → title while the device is reachable
+    # (File Transfer mode, port 80 open). This ensures the first KOReader sync
+    # for any book writes to the vault immediately — no lag waiting for a second
+    # File Transfer session.
     koreader_db = os.getenv("KOREADER_DB", "/data/state/koreader.db")
     try:
-        from xteink_service.alias import _scan_resolve
-        await _scan_resolve(state_db, koreader_db, host)
+        from xteink_service.alias import _preload_all_aliases, _scan_resolve
+        await _preload_all_aliases(state_db, host)   # map all epubs on device
+        await _scan_resolve(state_db, koreader_db, host)  # also resolve any pending hashes
     except Exception as exc:
         logger.debug("Alias scan skipped: %s", exc)
 

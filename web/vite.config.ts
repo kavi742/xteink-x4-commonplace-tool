@@ -23,5 +23,11 @@ export default defineConfig(({ mode }) => ({
 			'/status': 'http://localhost:8090',
 			'/syncs': 'http://localhost:8090',
 		}
+	},
+	test: {
+		environment: 'jsdom',
+		setupFiles: ['./src/test/setup.ts'],
+		include: ['src/**/*.test.ts'],
+		globals: true,
 	}
 }));

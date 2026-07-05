@@ -4,6 +4,8 @@
 	let { books } = $derived(data);
 </script>
 
+<svelte:head><title>Books — xteink</title></svelte:head>
+
 <h1 class="page-title">Books</h1>
 
 {#if books.length === 0}

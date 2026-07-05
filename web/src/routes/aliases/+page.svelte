@@ -25,6 +25,8 @@
 	}
 </script>
 
+<svelte:head><title>Aliases — xteink</title></svelte:head>
+
 <h1 class="page-title">Aliases</h1>
 <p style="font-size:12px;color:var(--text-muted);margin-bottom:1rem">
 	Hash → title mappings for books in the reading log. Click a title to rename.

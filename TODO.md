@@ -6,7 +6,7 @@
   - [x] `Reading Log/` directory
   - [x] `Books/` directory
   - via `scripts/init-vault.sh` — idempotent, run it whenever
-- [ ] Set up Syncthing between homelab and Obsidian clients
+- [x] Set up Syncthing between homelab and Obsidian clients
   - manual pairing step (Syncthing device IDs), can't be scripted from here
 - [x] Configure Syncthing to ignore temporary files
   - `.stignore` written into the vault by `scripts/init-vault.sh`
@@ -100,10 +100,9 @@ Write KOReader reading progress into the vault alongside screenshots.
 
 ## Phase 8: Observability
 
-- [ ] Implement ntfy.sh notifications
-- [ ] Implement Home Assistant webhook notifications
-- [ ] Create FastAPI JSON status endpoint (`/status`)
-- [ ] Display: last sync time, books touched today, total screenshots, recent errors
+- [x] Implement ntfy.sh notifications
+- [x] Create FastAPI JSON status endpoint (`/status`)
+- [x] Display: last sync time, books touched today, total screenshots, recent KOReader updates
 - [ ] Add logging throughout all components
 
 ## Phase 9: Full Data Store + CRUD API + Web UI
@@ -119,20 +118,23 @@ KOReader sync data (Phase 5) and screenshot data (Phase 6) both feed this.
 | `user_notes` | `synced_screenshots` | Free-form per-screenshot notes |
 
 ### CRUD API (FastAPI, no new dep)
-- [ ] `GET /api/books` — book list with screenshot counts
-- [ ] `GET /api/books/{book}/screenshots` — screenshot metadata (no blob)
-- [ ] `GET /api/screenshots/{id}/image` — serve PNG from DB
-- [ ] `PUT /api/screenshots/{id}` — update `ocr_corrected` and/or `user_notes`
-- [ ] `GET /api/reading-log` — KOReader progress history
-- [ ] `POST /api/vault/export` — rebuild all vault markdown from DB
+- [x] `GET /api/books` — book list with screenshot counts
+- [x] `GET /api/books/{book}/screenshots` — screenshot metadata (no blob)
+- [x] `GET /api/screenshots/{id}/image` — serve PNG from vault filesystem
+- [x] `PUT /api/screenshots/{id}` — update `ocr_corrected` and/or `user_notes`
+- [x] `GET /api/reading-log` — KOReader progress history
+- [x] `POST /api/vault/rebuild` — rebuild all vault markdown from DB
+- [x] `GET/PUT /api/aliases` — hash → title management
 
 ### Web frontend
 Single HTML file at `/app`. Vanilla JS + `fetch()`, no build step, no framework.
 
-- [ ] Book list with screenshot counts
-- [ ] Screenshot view: image, OCR text, inline edit for corrections and notes
-- [ ] Reading log tab
-- [ ] "Export vault" button
+- [ ] Book list + screenshot gallery (SvelteKit, `/books`)
+- [ ] Screenshot detail panel (full image, OCR edit, notes)
+- [ ] Reading log tab (`/log`)
+- [ ] Alias management table (`/aliases`)
+- [ ] TBR list (`/tbr`)
+- [ ] Essay per day (`/essays`) — fetch, convert to EPUB, push to X4
 
 ## Phase 10: Integration & Polish
 

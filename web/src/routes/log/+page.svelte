@@ -4,9 +4,11 @@
 
 	function cfi(progress: string) {
 		const m = progress?.match(/DocFragment\[(\d+)\]/);
-		return m ? `§${m[1]}` : '';
+		return m ? `\u00a7${m[1]}` : '';
 	}
 </script>
+
+<svelte:head><title>Reading Log — xteink</title></svelte:head>
 
 <h1 class="page-title">Reading Log</h1>
 
@@ -16,12 +18,17 @@
 	{#each entries as entry}
 		<div class="log-entry">
 			<div class="log-entry-title">
-				{entry.title_resolved ?? entry.document.slice(0, 12) + '…'}
+				{#if entry.title_resolved}
+					{entry.title_resolved}
+				{:else}
+					<span style="color:var(--text-muted);font-family:var(--font-mono);font-size:12px">{entry.document.slice(0, 16)}…</span>
+					<a href="/aliases" style="font-size:11px;margin-left:.5rem;opacity:.7">→ map in aliases</a>
+				{/if}
 			</div>
 			<div class="log-entry-detail">
 				{entry.percentage_display}%
 				{#if cfi(entry.progress)} · {cfi(entry.progress)}{/if}
-				· {new Date(entry.at).toLocaleString()}
+				· {new Date(entry.at).toLocaleDateString()}
 			</div>
 		</div>
 	{/each}

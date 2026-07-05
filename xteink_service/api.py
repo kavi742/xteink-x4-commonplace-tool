@@ -137,30 +137,38 @@ async def status():
 @router.get("/api/books")
 async def list_books():
     """List all books with screenshot counts."""
-    with _state_conn() as conn:
-        rows = conn.execute("""
-            SELECT book_title,
-                   COUNT(*)        AS screenshot_count,
-                   MAX(synced_at)  AS last_synced,
-                   MAX(sync_date)  AS last_date
-            FROM synced_screenshots
-            GROUP BY book_title
-            ORDER BY book_title
-        """).fetchall()
-    return [dict(r) for r in rows]
+    try:
+        with _state_conn() as conn:
+            rows = conn.execute("""
+                SELECT book_title,
+                       COUNT(*)        AS screenshot_count,
+                       MAX(synced_at)  AS last_synced,
+                       MAX(sync_date)  AS last_date
+                FROM synced_screenshots
+                GROUP BY book_title
+                ORDER BY book_title
+            """).fetchall()
+        return [dict(r) for r in rows]
+    except Exception:
+        return []
 
 
 @router.get("/api/books/{slug}/screenshots")
 async def list_screenshots(slug: str):
-    """Screenshots for a book (matched by book_title or sanitised slug)."""
-    with _state_conn() as conn:
-        rows = conn.execute(
-            "SELECT * FROM synced_screenshots WHERE book_title = ? ORDER BY id",
-            (slug,),
-        ).fetchall()
-    if not rows:
+    """Screenshots for a book (matched by book_title)."""
+    try:
+        with _state_conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM synced_screenshots WHERE book_title = ? ORDER BY id",
+                (slug,),
+            ).fetchall()
+        if not rows:
+            raise HTTPException(status_code=404, detail=f"Book '{slug}' not found")
+        return [dict(r) for r in rows]
+    except HTTPException:
+        raise
+    except Exception:
         raise HTTPException(status_code=404, detail=f"Book '{slug}' not found")
-    return [dict(r) for r in rows]
 
 
 # ------------------------------------------------------------------ #

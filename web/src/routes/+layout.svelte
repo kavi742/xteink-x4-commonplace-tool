@@ -31,6 +31,10 @@
 		e.preventDefault();
 		if (searchQ.trim()) goto(`/search?q=${encodeURIComponent(searchQ.trim())}`);
 	}
+
+	function isActive(href: string) {
+		return page.url.pathname === href || page.url.pathname.startsWith(href + '/');
+	}
 </script>
 
 <div class="app">

@@ -18,13 +18,6 @@ section() { echo; echo "== $1 =="; }
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
-check_device() {
-  if ! curl -sf --connect-timeout 3 "http://$HOST/api/status" >/dev/null 2>&1; then
-    echo "ERROR: Cannot reach $HOST — put the X4 in File Transfer mode first."
-    exit 1
-  fi
-}
-
 kill_server() {
   local pid
   pid=$(lsof -ti ":$PORT" 2>/dev/null | head -1)
@@ -34,10 +27,16 @@ kill_server() {
 # ── 0. pre-flight ─────────────────────────────────────────────────────────────
 
 section "pre-flight"
-check_device
-pass "device reachable at $HOST"
-
 kill_server
+
+echo "  Waiting for X4 to enter File Transfer mode (polling $HOST every 5s)..."
+echo "  Press File Transfer on the device now. Ctrl+C to abort."
+uv run python -c "
+import asyncio
+from xteink_service.watcher import poll_for_device
+asyncio.run(poll_for_device('$HOST'))
+"
+pass "device online at $HOST"
 
 # ── 1. wipe vault ─────────────────────────────────────────────────────────────
 

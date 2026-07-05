@@ -9,6 +9,13 @@
 	let results = $state<SearchResult[]>(data.results);
 	let loading = $state(false);
 
+	// Sync when data changes (e.g. sidebar search navigates to /search while already on /search)
+	$effect(() => {
+		q = data.q;
+		results = data.results;
+		loading = false;
+	});
+
 	const FIELD_LABELS: Record<string, string> = {
 		book_title: 'Title',
 		ocr_text: 'OCR',

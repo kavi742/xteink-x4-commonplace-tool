@@ -35,7 +35,7 @@
 
 	function submitSearch(e: Event) {
 		e.preventDefault();
-		if (searchQ.trim()) goto(`/search?q=${encodeURIComponent(searchQ.trim())}`);
+		if (searchQ.trim()) goto(`/search?q=${encodeURIComponent(searchQ.trim())}`, { invalidateAll: true });
 	}
 
 	function isActive(href: string) {

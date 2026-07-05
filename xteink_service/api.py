@@ -576,11 +576,64 @@ class TbrBookUpdate(BaseModel):
     sort_order: int | None = None
 
 
+def _ensure_tbr(conn: sqlite3.Connection) -> None:
+    """Create tbr_books table if it doesn't exist (migration-safe)."""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS tbr_books (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            title      TEXT    NOT NULL,
+            author     TEXT    DEFAULT '',
+            source_url TEXT    DEFAULT '',
+            notes      TEXT    DEFAULT '',
+            status     TEXT    DEFAULT 'queued',
+            sort_order INTEGER DEFAULT 0,
+            added_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+
+@router.get("/api/tbr/search")
+async def search_books(q: str = ""):
+    """
+    Search Open Library for books to add to TBR.
+    No API key required. Returns up to 10 results.
+    """
+    if not q.strip():
+        return []
+    import urllib.request, urllib.parse, json as _json
+    url = (
+        "https://openlibrary.org/search.json?"
+        + urllib.parse.urlencode({
+            "q": q,
+            "fields": "key,title,author_name,cover_i,first_publish_year",
+            "limit": 10,
+        })
+    )
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "xteink-commonplace/1.0"})
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            data = _json.loads(resp.read())
+        results = []
+        for doc in data.get("docs", []):
+            cover_id = doc.get("cover_i")
+            results.append({
+                "title": doc.get("title", ""),
+                "author": ", ".join(doc.get("author_name", [])[:2]),
+                "year": doc.get("first_publish_year"),
+                "cover_url": f"https://covers.openlibrary.org/b/id/{cover_id}-S.jpg" if cover_id else None,
+                "ol_key": doc.get("key", ""),
+            })
+        return results
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Open Library search failed: {exc}")
+
+
 @router.get("/api/tbr")
 async def list_tbr():
     """List all TBR books ordered by status (reading first) then sort_order."""
     try:
         with _state_conn() as conn:
+            _ensure_tbr(conn)
             rows = conn.execute("""
                 SELECT * FROM tbr_books
                 ORDER BY
@@ -595,12 +648,13 @@ async def list_tbr():
 @router.post("/api/tbr")
 async def add_tbr(body: TbrBookIn):
     """Add a book to the TBR list."""
-    with _state_conn() as conn:
+    with sqlite3.connect(_state_db()) as conn:
+        conn.row_factory = sqlite3.Row
+        _ensure_tbr(conn)
         cur = conn.execute(
             "INSERT INTO tbr_books (title, author, source_url, notes) VALUES (?,?,?,?)",
             (body.title, body.author, body.source_url, body.notes),
         )
-        conn.row_factory = sqlite3.Row
         row = conn.execute("SELECT * FROM tbr_books WHERE id = ?", (cur.lastrowid,)).fetchone()
     return dict(row)
 
@@ -618,6 +672,7 @@ async def update_tbr(tbr_id: int, body: TbrBookUpdate):
         raise HTTPException(status_code=400, detail="No fields to update")
     values.append(tbr_id)
     with sqlite3.connect(_state_db()) as conn:
+        _ensure_tbr(conn)
         cur = conn.execute(
             f"UPDATE tbr_books SET {', '.join(fields)} WHERE id = ?", values
         )
@@ -630,6 +685,7 @@ async def update_tbr(tbr_id: int, body: TbrBookUpdate):
 async def delete_tbr(tbr_id: int):
     """Remove a TBR book."""
     with sqlite3.connect(_state_db()) as conn:
+        _ensure_tbr(conn)
         cur = conn.execute("DELETE FROM tbr_books WHERE id = ?", (tbr_id,))
         if cur.rowcount == 0:
             raise HTTPException(status_code=404, detail="TBR book not found")

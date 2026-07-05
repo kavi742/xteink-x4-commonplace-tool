@@ -68,6 +68,14 @@ export interface TbrBook {
 	added_at: string;
 }
 
+export interface OlBook {
+	title: string;
+	author: string;
+	year: number | null;
+	cover_url: string | null;
+	ol_key: string;
+}
+
 export interface StatusResponse {
 	screenshots: {
 		total: number;
@@ -149,6 +157,7 @@ function createApi(customFetch: Fetch = fetch) {
 
 		tbr: {
 			list: () => get<TbrBook[]>('/api/tbr'),
+			search: (q: string) => get<OlBook[]>(`/api/tbr/search?q=${encodeURIComponent(q)}`),
 			add: (body: { title: string; author?: string; source_url?: string; notes?: string }) =>
 				post<TbrBook>('/api/tbr', body),
 			update: (id: number, body: Partial<TbrBook>) =>

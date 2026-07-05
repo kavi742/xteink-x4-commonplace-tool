@@ -37,7 +37,7 @@ services:
       # Bind to Tailscale interface only — not exposed on the public internet.
       # Replace 100.x.x.x with this machine's Tailscale IP (`tailscale ip -4`).
       # To also allow LAN access, use 0.0.0.0 and rely on your firewall (ufw).
-      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:8888:8080"
       - "127.0.0.1:50000:50000"
     volumes:
       - /srv/docker/data/jenkins:/var/jenkins_home

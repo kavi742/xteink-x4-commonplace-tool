@@ -31,7 +31,10 @@ services:
     restart: unless-stopped
 
   jenkins:
-    image: jenkins/jenkins:lts
+    build:
+      context: .
+      dockerfile: Dockerfile.jenkins
+    image: xteink-jenkins:latest
     container_name: jenkins
     ports:
       # Bind to Tailscale interface only — not exposed on the public internet.

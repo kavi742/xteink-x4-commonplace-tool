@@ -1,0 +1,40 @@
+FROM jenkins/jenkins:lts
+
+USER root
+
+# --- System deps ---
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    unzip \
+    git \
+    openjdk-17-jdk-headless \
+    && rm -rf /var/lib/apt/lists/*
+
+# --- Node.js 20 (LTS) ---
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# --- Android command-line tools ---
+ENV ANDROID_HOME=/opt/android-sdk
+ENV PATH="${PATH}:${ANDROID_HOME}/cmdline-tools/latest/bin:${ANDROID_HOME}/platform-tools"
+
+RUN mkdir -p ${ANDROID_HOME}/cmdline-tools && \
+    curl -fsSL \
+      "https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip" \
+      -o /tmp/cmdline-tools.zip && \
+    unzip -q /tmp/cmdline-tools.zip -d /tmp/cmdline-tools && \
+    mv /tmp/cmdline-tools/cmdline-tools ${ANDROID_HOME}/cmdline-tools/latest && \
+    rm /tmp/cmdline-tools.zip
+
+# Accept licenses and install SDK components needed by Gradle + Capacitor
+RUN yes | sdkmanager --licenses > /dev/null && \
+    sdkmanager \
+      "platform-tools" \
+      "platforms;android-34" \
+      "build-tools;34.0.0"
+
+# Give the jenkins user access to the SDK
+RUN chown -R jenkins:jenkins ${ANDROID_HOME}
+
+USER jenkins

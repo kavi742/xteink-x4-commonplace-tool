@@ -29,6 +29,13 @@ app = FastAPI(title="xteink-service", version="1.0.0")
 from xteink_service.api import router as api_router  # noqa: E402
 app.include_router(api_router)
 
+# Serve the built SvelteKit web UI at /app (production)
+import pathlib as _pathlib
+_web_build = _pathlib.Path(__file__).parent.parent / "web" / "build"
+if _web_build.exists():
+    from fastapi.staticfiles import StaticFiles
+    app.mount("/app", StaticFiles(directory=str(_web_build), html=True), name="webapp")
+
 
 # ------------------------------------------------------------------ #
 # Storage                                                              #

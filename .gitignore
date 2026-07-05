@@ -1,4 +1,7 @@
-# --- Python ---
+# --- Web UI (SvelteKit) ---
+web/node_modules/
+web/build/
+web/.svelte-kit/
 __pycache__/
 *.py[cod]
 *.egg-info/

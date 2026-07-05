@@ -90,6 +90,9 @@ async def status():
             "last_book": last_row["book_title"] if last_row else None,
             "today_count": today_count,
             "books_today": books_today,
+            "noted_count": conn.execute(
+                "SELECT COUNT(*) FROM synced_screenshots WHERE user_notes IS NOT NULL AND user_notes != ''"
+            ).fetchone()[0],
         }
     except Exception as exc:
         result["screenshots"] = {"error": str(exc)}

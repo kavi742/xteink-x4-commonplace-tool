@@ -8,14 +8,19 @@
 	import type { HighlightWithMeta } from '$lib/api';
 	import ScreenshotPanel from '$lib/components/ScreenshotPanel.svelte';
 	import StatusWidget from '$lib/components/StatusWidget.svelte';
-	import SidebarNotes from '$lib/components/SidebarNotes.svelte';
 
 	let { children, data } = $props();
 	let { books } = $derived(data);
 	let recentHighlights = $state<HighlightWithMeta[]>([]);
 
+	let notedCount = $state(0);
+
 	onMount(async () => {
 		recentHighlights = await api.highlights.listAll(5).catch(() => []);
+		try {
+			const s = await api.status();
+			notedCount = (s as any).screenshots?.noted_count ?? 0;
+		} catch {}
 	});
 
 	const navLinks = [
@@ -41,6 +46,10 @@
 <div class="app">
 	<aside class="sidebar">
 		<div class="sidebar-top">
+			<a href="/books" class="sidebar-home" title="Home">
+				<span class="sidebar-home-name">xteink</span>
+				<span class="sidebar-home-sub">commonplace</span>
+			</a>
 			<form onsubmit={submitSearch} style="display:flex;gap:.35rem;margin-bottom:.6rem">
 				<input
 					type="text"
@@ -92,7 +101,16 @@
 				</div>
 			{/if}
 
-			<SidebarNotes />
+			{#if notedCount > 0}
+				<a
+					href="/search?notes_only=1"
+					class:active={page.url.pathname === '/search' && page.url.searchParams.get('notes_only') === '1'}
+					style="display:flex;align-items:center;justify-content:space-between;padding:.2rem .5rem;border-radius:var(--radius);font-size:12px;color:var(--text-muted);margin-top:.75rem"
+				>
+					<span>📝 With notes</span>
+					<span class="count">{notedCount}</span>
+				</a>
+			{/if}
 		</div>
 	</aside>
 

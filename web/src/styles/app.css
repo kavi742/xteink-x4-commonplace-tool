@@ -72,3 +72,8 @@ img{display:block;max-width:100%}
 .sidebar-mark{font-family:var(--font-serif);font-size:11px;line-height:1.4;background:#fff176;padding:.1rem .2rem;border-radius:2px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 @media (prefers-color-scheme:dark){.sidebar-mark{background:#6b5900;color:#fff}}
 .sidebar-hl-book{font-size:10px;color:var(--text-muted)}
+
+.sidebar-home{display:flex;flex-direction:column;gap:0;text-decoration:none;padding:.5rem .5rem .4rem;margin:-0.25rem -.25rem .4rem;border-radius:var(--radius);transition:background .15s}
+.sidebar-home:hover{background:var(--active-bg)}
+.sidebar-home-name{font-size:14px;font-weight:700;color:var(--text);letter-spacing:-.01em;line-height:1.2}
+.sidebar-home-sub{font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.08em}

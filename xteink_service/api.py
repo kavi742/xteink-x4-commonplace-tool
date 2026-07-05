@@ -507,8 +507,21 @@ async def create_highlight(screenshot_id: int, body: HighlightIn):
     if not shot:
         raise HTTPException(status_code=404, detail="Screenshot not found")
 
-    # Store in DB
-    highlight = state.add_highlight(screenshot_id, body.selected_text)
+    # Compute word bounding boxes from the vault PNG
+    bbox_json = "[]"
+    img_w = img_h = 0
+    if shot.get("vault_png_path"):
+        png_path = _vault_path() / "Books" / shot["vault_png_path"]
+        if png_path.exists():
+            bboxes, img_w, img_h = _find_text_bboxes(png_path, body.selected_text)
+            import json
+            bbox_json = json.dumps(bboxes)
+
+    # Store in DB (with bboxes so the UI can render the SVG overlay)
+    highlight = state.add_highlight(
+        screenshot_id, body.selected_text,
+        bbox_json=bbox_json, img_w=img_w, img_h=img_h,
+    )
 
     # Write ==text== into the vault book note
     vault = _vault_path()

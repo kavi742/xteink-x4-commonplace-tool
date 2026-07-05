@@ -15,7 +15,9 @@ async def x4_status(host: str):
     """
     ws = None
     try:
-        ws = await websockets.connect(f"ws://{host}:81/")
+        # Strip port suffix if host was given as "ip:port" (e.g. in tests)
+        ws_host = host.split(":")[0]
+        ws = await websockets.connect(f"ws://{ws_host}:81/")
         logger.debug("WebSocket connected to %s:81", host)
 
         async def show(message: str, data: bytes | None = None) -> None:
@@ -40,7 +42,7 @@ async def x4_status(host: str):
     except Exception as e:
         logger.warning("Could not connect to X4 status display: %s", e)
 
-        async def _noop(_: str, __: bytes | None = None) -> None:
+        async def _noop(_: str, data: bytes | None = None) -> None:
             pass
 
         yield _noop

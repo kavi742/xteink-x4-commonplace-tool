@@ -21,3 +21,11 @@ Thumbs.db
 # Vite
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# Android build outputs (source files tracked; compiled artefacts are not)
+android/.gradle/
+android/app/build/
+android/build/
+android/local.properties
+android/.idea/
+android/captures/

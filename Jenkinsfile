@@ -1,32 +1,33 @@
 // Jenkinsfile — builds the Android APK whenever web/ changes.
-// Place this file at the repo root. Jenkins Pipeline job points at this repo.
+// Jenkins Pipeline job: Pipeline script from SCM → Git → this repo.
 
 pipeline {
     agent any
 
-    // Only trigger a full build when files under web/ change.
-    // On manual runs (e.g. first run) the build always proceeds.
     options {
         skipDefaultCheckout(false)
         disableConcurrentBuilds()
     }
 
     environment {
-        // Path baked into Dockerfile.jenkins
         ANDROID_HOME = '/opt/android-sdk'
-        // Signing — optional. Set these as Jenkins credentials if you want
-        // a release-signed APK. Comment out the sign stage if not needed yet.
-        // KEYSTORE_FILE = credentials('android-keystore')
-        // KEY_ALIAS     = credentials('android-key-alias')
-        // KEY_PASSWORD  = credentials('android-key-password')
-        // STORE_PASSWORD = credentials('android-store-password')
+        PATH         = "${env.ANDROID_HOME}/cmdline-tools/latest/bin:${env.ANDROID_HOME}/platform-tools:${env.PATH}"
     }
 
     stages {
+        stage('Checkout') {
+            steps {
+                checkout scmGit(
+                    branches: [[name: '*/main']],
+                    userRemoteConfigs: [[url: 'https://github.com/kavi742/xteink-x4-commonplace-tool.git']]
+                )
+            }
+        }
+
         stage('Install web deps') {
             steps {
                 dir('web') {
-                    sh 'npm ci'
+                    sh 'npm ci --ignore-engines'
                 }
             }
         }
@@ -42,8 +43,6 @@ pipeline {
         stage('Capacitor sync') {
             steps {
                 dir('web') {
-                    // Installs Capacitor if not yet present, then copies
-                    // web/build/ into android/app/src/main/assets/public/
                     sh 'npx cap sync android'
                 }
             }
@@ -57,8 +56,14 @@ pipeline {
             }
         }
 
-        // Uncomment after setting up signing credentials:
+        // Uncomment after configuring signing credentials in Jenkins:
         // stage('Build APK (release)') {
+        //     environment {
+        //         KEYSTORE_FILE   = credentials('android-keystore')
+        //         KEY_ALIAS       = credentials('android-key-alias')
+        //         KEY_PASSWORD    = credentials('android-key-password')
+        //         STORE_PASSWORD  = credentials('android-store-password')
+        //     }
         //     steps {
         //         dir('web/android') {
         //             sh '''
@@ -75,7 +80,6 @@ pipeline {
 
     post {
         success {
-            // Archive APK so it appears as a downloadable artifact in Jenkins UI
             archiveArtifacts artifacts: 'web/android/app/build/outputs/apk/debug/*.apk',
                              fingerprint: true
             echo 'APK archived — download from the Jenkins build page.'

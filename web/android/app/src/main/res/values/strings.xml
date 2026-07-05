@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Xteink Commonplace</string>
+    <string name="title_activity_main">Xteink Commonplace</string>
+    <string name="package_name">com.xteink.commonplace</string>
+    <string name="custom_url_scheme">com.xteink.commonplace</string>
+</resources>

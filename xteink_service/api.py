@@ -554,3 +554,83 @@ async def delete_highlight(highlight_id: int):
     if not state.delete_highlight(highlight_id):
         raise HTTPException(status_code=404, detail="Highlight not found")
     return {"deleted": highlight_id}
+
+
+# ------------------------------------------------------------------ #
+# TBR (To Be Read) list                                               #
+# ------------------------------------------------------------------ #
+
+class TbrBookIn(BaseModel):
+    title: str
+    author: str = ""
+    source_url: str = ""
+    notes: str = ""
+
+
+class TbrBookUpdate(BaseModel):
+    title: str | None = None
+    author: str | None = None
+    source_url: str | None = None
+    notes: str | None = None
+    status: str | None = None   # 'queued' | 'reading' | 'done'
+    sort_order: int | None = None
+
+
+@router.get("/api/tbr")
+async def list_tbr():
+    """List all TBR books ordered by status (reading first) then sort_order."""
+    try:
+        with _state_conn() as conn:
+            rows = conn.execute("""
+                SELECT * FROM tbr_books
+                ORDER BY
+                    CASE status WHEN 'reading' THEN 0 WHEN 'queued' THEN 1 ELSE 2 END,
+                    sort_order, id
+            """).fetchall()
+        return [dict(r) for r in rows]
+    except Exception:
+        return []
+
+
+@router.post("/api/tbr")
+async def add_tbr(body: TbrBookIn):
+    """Add a book to the TBR list."""
+    with _state_conn() as conn:
+        cur = conn.execute(
+            "INSERT INTO tbr_books (title, author, source_url, notes) VALUES (?,?,?,?)",
+            (body.title, body.author, body.source_url, body.notes),
+        )
+        conn.row_factory = sqlite3.Row
+        row = conn.execute("SELECT * FROM tbr_books WHERE id = ?", (cur.lastrowid,)).fetchone()
+    return dict(row)
+
+
+@router.put("/api/tbr/{tbr_id}")
+async def update_tbr(tbr_id: int, body: TbrBookUpdate):
+    """Update a TBR book (status, notes, reorder, etc.)."""
+    fields, values = [], []
+    for attr in ("title", "author", "source_url", "notes", "status", "sort_order"):
+        val = getattr(body, attr)
+        if val is not None:
+            fields.append(f"{attr} = ?")
+            values.append(val)
+    if not fields:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    values.append(tbr_id)
+    with sqlite3.connect(_state_db()) as conn:
+        cur = conn.execute(
+            f"UPDATE tbr_books SET {', '.join(fields)} WHERE id = ?", values
+        )
+        if cur.rowcount == 0:
+            raise HTTPException(status_code=404, detail="TBR book not found")
+    return {"updated": tbr_id}
+
+
+@router.delete("/api/tbr/{tbr_id}")
+async def delete_tbr(tbr_id: int):
+    """Remove a TBR book."""
+    with sqlite3.connect(_state_db()) as conn:
+        cur = conn.execute("DELETE FROM tbr_books WHERE id = ?", (tbr_id,))
+        if cur.rowcount == 0:
+            raise HTTPException(status_code=404, detail="TBR book not found")
+    return {"deleted": tbr_id}

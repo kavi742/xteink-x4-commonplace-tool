@@ -20,6 +20,7 @@
 	const navLinks = [
 		{ href: '/books',      label: 'Books' },
 		{ href: '/log',        label: 'Reading Log' },
+		{ href: '/tbr',        label: 'TBR' },
 		{ href: '/highlights', label: 'Highlights' },
 		{ href: '/aliases',    label: 'Aliases' },
 	];

@@ -57,6 +57,17 @@ export interface SearchResult extends Screenshot {
 	highlight_matches: string[];
 }
 
+export interface TbrBook {
+	id: number;
+	title: string;
+	author: string;
+	source_url: string;
+	notes: string;
+	status: 'queued' | 'reading' | 'done';
+	sort_order: number;
+	added_at: string;
+}
+
 export interface StatusResponse {
 	screenshots: {
 		total: number;
@@ -135,6 +146,16 @@ function createApi(customFetch: Fetch = fetch) {
 
 		search: (q: string, limit = 50) =>
 			get<SearchResult[]>(`/api/search?q=${encodeURIComponent(q)}&limit=${limit}`),
+
+		tbr: {
+			list: () => get<TbrBook[]>('/api/tbr'),
+			add: (body: { title: string; author?: string; source_url?: string; notes?: string }) =>
+				post<TbrBook>('/api/tbr', body),
+			update: (id: number, body: Partial<TbrBook>) =>
+				put<{ updated: number }>(`/api/tbr/${id}`, body),
+			delete: (id: number) =>
+				del<{ deleted: number }>(`/api/tbr/${id}`),
+		},
 
 		readingLog: {
 			list: (limit = 100) => get<ProgressEntry[]>(`/api/reading-log?limit=${limit}`),

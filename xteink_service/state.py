@@ -38,6 +38,18 @@ class SyncState:
                     FOREIGN KEY(screenshot_id) REFERENCES synced_screenshots(id)
                 )
             """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS tbr_books (
+                    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                    title      TEXT    NOT NULL,
+                    author     TEXT    DEFAULT '',
+                    source_url TEXT    DEFAULT '',
+                    notes      TEXT    DEFAULT '',
+                    status     TEXT    DEFAULT 'queued',
+                    sort_order INTEGER DEFAULT 0,
+                    added_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
             # Migrate existing DBs that predate the new columns
             for col, typedef in [
                 ("vault_png_path", "TEXT DEFAULT ''"),

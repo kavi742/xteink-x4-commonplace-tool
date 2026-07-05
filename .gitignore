@@ -35,6 +35,7 @@ logs/
 test_scripts/sample_screenshot.png
 test_scripts/sample_ocr.txt
 test_scripts/vault/
+barnsworthburning/
 
 # --- Secrets / local overrides ---
 .env

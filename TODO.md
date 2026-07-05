@@ -166,3 +166,7 @@ KOReader sync data (Phase 5) and screenshot data (Phase 6) both feed this.
 
 - [ ] **Essay per day** — fetch essay from web source, convert to EPUB (pandoc/ebooklib),
       push to X4 via Calibre Wireless upload. Web UI at `/essays` with source picker and queue.
+- [ ] **Android app** — wrap the SvelteKit web UI as a native Android app via Capacitor.
+      Web UI already uses `adapter-static` (required). Steps: `npm install @capacitor/core @capacitor/cli @capacitor/android`,
+      `npx cap init`, `npx cap add android`, `npx cap sync`, `npx cap run android`.
+      Note: all API calls must point to the homelab (Tailscale IP or local) — configure base URL via env at build time.

@@ -26,6 +26,15 @@ class SyncState:
                     UNIQUE(device_path, content_hash)
                 )
             """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS highlights (
+                    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                    screenshot_id  INTEGER NOT NULL,
+                    selected_text  TEXT    NOT NULL,
+                    created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY(screenshot_id) REFERENCES synced_screenshots(id)
+                )
+            """)
             # Migrate existing DBs that predate the new columns
             for col, typedef in [
                 ("vault_png_path", "TEXT DEFAULT ''"),
@@ -151,3 +160,33 @@ class SyncState:
                 (doc_hash,),
             ).fetchone()
         return row[0] if row else None
+
+    # ------------------------------------------------------------------ #
+    # Highlights                                                           #
+    # ------------------------------------------------------------------ #
+
+    def add_highlight(self, screenshot_id: int, selected_text: str) -> dict:
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cur = conn.execute(
+                "INSERT INTO highlights (screenshot_id, selected_text) VALUES (?, ?)",
+                (screenshot_id, selected_text),
+            )
+            row = conn.execute(
+                "SELECT * FROM highlights WHERE id = ?", (cur.lastrowid,)
+            ).fetchone()
+        return dict(row)
+
+    def list_highlights(self, screenshot_id: int) -> list[dict]:
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT * FROM highlights WHERE screenshot_id = ? ORDER BY id",
+                (screenshot_id,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def delete_highlight(self, highlight_id: int) -> bool:
+        with sqlite3.connect(self.db_path) as conn:
+            cur = conn.execute("DELETE FROM highlights WHERE id = ?", (highlight_id,))
+        return cur.rowcount > 0

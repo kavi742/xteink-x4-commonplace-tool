@@ -41,6 +41,13 @@ export interface Alias {
 	resolved_by: string;
 }
 
+export interface Highlight {
+	id: number;
+	screenshot_id: number;
+	selected_text: string;
+	created_at: string;
+}
+
 export interface StatusResponse {
 	screenshots: {
 		total: number;
@@ -74,6 +81,22 @@ function createApi(customFetch: Fetch = fetch) {
 		return res.json() as Promise<T>;
 	}
 
+	async function post<T>(url: string, body: unknown): Promise<T> {
+		const res = await customFetch(url, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify(body),
+		});
+		if (!res.ok) throw new Error(`${res.status} ${res.statusText} — ${url}`);
+		return res.json() as Promise<T>;
+	}
+
+	async function del<T>(url: string): Promise<T> {
+		const res = await customFetch(url, { method: 'DELETE' });
+		if (!res.ok) throw new Error(`${res.status} ${res.statusText} — ${url}`);
+		return res.json() as Promise<T>;
+	}
+
 	return {
 		status: () => get<StatusResponse>('/status'),
 
@@ -88,6 +111,15 @@ function createApi(customFetch: Fetch = fetch) {
 			imageUrl: (id: number) => `/api/screenshots/${id}/image`,
 			update: (id: number, body: { ocr_corrected?: string; user_notes?: string }) =>
 				put<{ updated: number }>(`/api/screenshots/${id}`, body),
+		},
+
+		highlights: {
+			list: (screenshotId: number) =>
+				get<Highlight[]>(`/api/screenshots/${screenshotId}/highlights`),
+			create: (screenshotId: number, selectedText: string) =>
+				post<Highlight>(`/api/screenshots/${screenshotId}/highlights`, { selected_text: selectedText }),
+			delete: (id: number) =>
+				del<{ deleted: number }>(`/api/highlights/${id}`),
 		},
 
 		readingLog: {

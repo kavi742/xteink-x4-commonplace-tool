@@ -1,13 +1,17 @@
 <script lang="ts">
-	import { api, type Screenshot } from '$lib/api';
+	import { api, type Screenshot, type Highlight } from '$lib/api';
 	import { panel } from '$lib/panel.svelte';
 
 	let shot = $state<Screenshot | null>(null);
+	let highlights = $state<Highlight[]>([]);
 	let saving = $state(false);
+	let selectedText = $state('');
+	let highlighting = $state(false);
 
 	$effect(() => {
-		if (panel.id === null) { shot = null; return; }
+		if (panel.id === null) { shot = null; highlights = []; return; }
 		api.screenshots.get(panel.id).then(s => { shot = s; });
+		api.highlights.list(panel.id).then(h => { highlights = h; });
 	});
 
 	async function save(field: 'ocr_corrected' | 'user_notes', value: string) {
@@ -15,6 +19,44 @@
 		saving = true;
 		await api.screenshots.update(shot.id, { [field]: value });
 		saving = false;
+	}
+
+	function handleMouseUp() {
+		const sel = window.getSelection();
+		selectedText = sel?.toString().trim() ?? '';
+	}
+
+	async function addHighlight() {
+		if (!shot || !selectedText) return;
+		highlighting = true;
+		try {
+			const h = await api.highlights.create(shot.id, selectedText);
+			highlights = [...highlights, h];
+			selectedText = '';
+			window.getSelection()?.removeAllRanges();
+		} finally {
+			highlighting = false;
+		}
+	}
+
+	async function removeHighlight(id: number) {
+		await api.highlights.delete(id);
+		highlights = highlights.filter(h => h.id !== id);
+	}
+
+	/** Render OCR text with <mark> around highlighted passages. */
+	function renderOcr(text: string, hl: Highlight[]): string {
+		if (!hl.length) return escapeHtml(text);
+		let result = escapeHtml(text);
+		for (const h of hl) {
+			const escaped = escapeHtml(h.selected_text);
+			result = result.replace(escaped, `<mark>${escaped}</mark>`);
+		}
+		return result;
+	}
+
+	function escapeHtml(s: string) {
+		return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 	}
 
 	let idx = $derived(panel.siblings.indexOf(panel.id ?? -1));
@@ -45,8 +87,39 @@
 
 		{#if shot.ocr_text}
 			<div>
-				<p class="panel-label">OCR text (original)</p>
-				<pre class="panel-ocr">{shot.ocr_text}</pre>
+				<div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:.3rem">
+					<p class="panel-label">OCR text</p>
+					{#if selectedText}
+						<button
+							onclick={addHighlight}
+							disabled={highlighting}
+							style="font-size:11px;padding:.15rem .4rem;background:var(--active-bg)"
+						>
+							{highlighting ? 'Saving…' : '✦ Highlight'}
+						</button>
+					{/if}
+				</div>
+				<!-- svelte-ignore a11y-no-static-element-interactions -->
+				<pre
+					class="panel-ocr"
+					onmouseup={handleMouseUp}
+					style="cursor:text"
+				>{@html renderOcr(shot.ocr_text, highlights)}</pre>
+
+				{#if highlights.length > 0}
+					<div style="margin-top:.5rem;display:flex;flex-direction:column;gap:.3rem">
+						{#each highlights as h}
+							<div style="display:flex;align-items:flex-start;gap:.4rem;font-size:12px">
+								<mark style="flex:1;font-family:var(--font-serif);line-height:1.5;padding:.1rem .3rem">{h.selected_text}</mark>
+								<button
+									onclick={() => removeHighlight(h.id)}
+									style="border:none;background:none;color:var(--text-muted);font-size:14px;padding:0;line-height:1;cursor:pointer"
+									title="Remove highlight"
+								>×</button>
+							</div>
+						{/each}
+					</div>
+				{/if}
 			</div>
 		{/if}
 
@@ -79,3 +152,13 @@
 		{/if}
 	{/if}
 </div>
+
+<style>
+	mark {
+		background: #fff176;
+		border-radius: 2px;
+	}
+	@media (prefers-color-scheme: dark) {
+		mark { background: #6b5900; color: #fff; }
+	}
+</style>

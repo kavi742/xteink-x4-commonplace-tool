@@ -3,11 +3,10 @@ Phase 8 + 9 API endpoints.
 
 Mounted on the koreader_sync FastAPI app (port 8090):
 
-  GET  /status                         — service health snapshot
-  GET  /api/books                      — book list with screenshot counts
-  GET  /api/books/{slug}               — single book metadata
-  GET  /api/books/{slug}/screenshots   — screenshots for a book
-  GET  /api/screenshots/{id}           — single screenshot metadata
+  GET  /status                               — service health snapshot
+  GET  /api/books                            — book list with screenshot counts
+  GET  /api/books/{slug}/screenshots         — screenshots for a book
+  GET  /api/screenshots/{id}                 — single screenshot metadata
   GET  /api/screenshots/{id}/image     — serve PNG from vault filesystem
   PUT  /api/screenshots/{id}           — update ocr_corrected / user_notes
   GET  /api/reading-log                — KOReader progress history (with titles)
@@ -342,3 +341,72 @@ async def rebuild_vault():
             pass
 
     return {"rebuilt_notes": rebuilt}
+
+
+# ------------------------------------------------------------------ #
+# Highlights                                                          #
+# ------------------------------------------------------------------ #
+
+class HighlightIn(BaseModel):
+    selected_text: str
+
+
+@router.get("/api/screenshots/{screenshot_id}/highlights")
+async def list_highlights(screenshot_id: int):
+    """Return all highlights for a screenshot."""
+    try:
+        from xteink_service.state import SyncState
+        state = SyncState(_state_db())
+        return state.list_highlights(screenshot_id)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.post("/api/screenshots/{screenshot_id}/highlights")
+async def create_highlight(screenshot_id: int, body: HighlightIn):
+    """
+    Save a text highlight for a screenshot and write ==text== into the Obsidian
+    book note so the passage appears highlighted in Obsidian.
+    """
+    from xteink_service.state import SyncState
+    state = SyncState(_state_db())
+
+    # Verify screenshot exists and get metadata
+    shot = state.get_screenshot(screenshot_id)
+    if not shot:
+        raise HTTPException(status_code=404, detail="Screenshot not found")
+
+    # Store in DB
+    highlight = state.add_highlight(screenshot_id, body.selected_text)
+
+    # Write ==text== into the vault book note
+    vault = _vault_path()
+    if vault.exists() and shot.get("book_title") and shot.get("vault_png_path"):
+        try:
+            from xteink_service.vault_writer import VaultWriter, _sanitize
+            book_slug = _sanitize(shot["book_title"])
+            note_path = vault / "Books" / f"{book_slug}.md"
+            if note_path.exists():
+                content = note_path.read_text()
+                # Wrap the selected text with == == (Obsidian highlight syntax)
+                # Only replace the first unformatted occurrence to avoid double-marking
+                marked = f"=={body.selected_text}=="
+                if marked not in content and body.selected_text in content:
+                    content = content.replace(body.selected_text, marked, 1)
+                    note_path.write_text(content)
+        except Exception as exc:
+            # Vault write failure is non-fatal — DB record is still saved
+            import logging
+            logging.getLogger(__name__).warning("Vault highlight write failed: %s", exc)
+
+    return highlight
+
+
+@router.delete("/api/highlights/{highlight_id}")
+async def delete_highlight(highlight_id: int):
+    """Remove a highlight. Does not un-mark the Obsidian note."""
+    from xteink_service.state import SyncState
+    state = SyncState(_state_db())
+    if not state.delete_highlight(highlight_id):
+        raise HTTPException(status_code=404, detail="Highlight not found")
+    return {"deleted": highlight_id}

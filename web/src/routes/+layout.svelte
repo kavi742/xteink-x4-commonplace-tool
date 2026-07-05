@@ -8,6 +8,7 @@
 	import type { HighlightWithMeta } from '$lib/api';
 	import ScreenshotPanel from '$lib/components/ScreenshotPanel.svelte';
 	import StatusWidget from '$lib/components/StatusWidget.svelte';
+	import SidebarNotes from '$lib/components/SidebarNotes.svelte';
 
 	let { children, data } = $props();
 	let { books } = $derived(data);
@@ -90,6 +91,8 @@
 					<a href="/highlights" style="font-size:11px;color:var(--text-muted);padding:.2rem .5rem">All highlights →</a>
 				</div>
 			{/if}
+
+			<SidebarNotes />
 		</div>
 	</aside>
 

@@ -81,28 +81,28 @@ img{display:block;max-width:100%}
 /* ── Touch baseline (all screens) ─────────────────────────────────────────── */
 button,a,[role=button]{-webkit-tap-highlight-color:transparent;touch-action:manipulation}
 
-/* ── Bottom nav (hidden on desktop) ───────────────────────────────────────── */
+/* ── Bottom nav + font ctrl hidden by default (desktop) ───────────────────── */
 .bottom-nav{display:none}
 .font-ctrl{display:none}
 
-/* ── Mobile layout ────────────────────────────────────────────────────────── */
-@media(max-width:768px){
+/* ══════════════════════════════════════════════════════════════════════════════
+   PORTRAIT (phones / narrow tablets held upright)
+   → single-column, bottom nav bar, no sidebar
+   ══════════════════════════════════════════════════════════════════════════ */
+@media (max-width:768px) and (orientation:portrait) {
   :root{--gap:.75rem}
   body{font-size:16px}
 
-  /* Stack app vertically; sidebar replaced by bottom nav */
   .app{grid-template-columns:1fr;height:100svh}
   .sidebar{display:none}
   .main{padding-bottom:calc(3.75rem + env(safe-area-inset-bottom))}
 
-  /* Bottom nav bar */
+  /* Bottom nav */
   .bottom-nav{
     display:flex;
     position:fixed;bottom:0;left:0;right:0;
-    background:var(--bg-sidebar);
-    border-top:1px solid var(--border);
-    padding-bottom:env(safe-area-inset-bottom);
-    z-index:200
+    background:var(--bg-sidebar);border-top:1px solid var(--border);
+    padding-bottom:env(safe-area-inset-bottom);z-index:200
   }
   .bottom-nav a{
     flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
@@ -115,37 +115,69 @@ button,a,[role=button]{-webkit-tap-highlight-color:transparent;touch-action:mani
 
   /* Tap targets */
   button{min-height:44px;padding:.5rem .9rem;font-size:15px}
-  input[type=text],textarea{font-size:16px;min-height:44px} /* 16px prevents iOS zoom */
-
-  /* Panel full-screen */
-  .panel-overlay{width:100%;border-left:none;top:0}
-
-  /* Gallery: 2 columns */
-  .gallery{column-width:unset;columns:2}
-
-  /* Larger card text */
-  .screenshot-card-ocr{font-size:13px}
-  .book-card-title{font-size:15px}
-  .book-card-meta{font-size:12px}
-
-  /* Scrollable tables */
-  .alias-table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch}
-
-  /* Log entries */
-  .log-entry{padding:.9rem 0}
-  .log-entry-title{font-size:15px}
-  .log-entry-detail{font-size:13px}
+  input[type=text],textarea{font-size:16px;min-height:44px}
 
   /* Font size control */
   .font-ctrl{
     display:flex;align-items:center;gap:4px;
     position:fixed;bottom:calc(3.75rem + env(safe-area-inset-bottom) + .75rem);right:.75rem;
     background:var(--bg-card);border:1px solid var(--border);
-    border-radius:2rem;padding:.3rem .5rem;
-    z-index:300;box-shadow:0 2px 8px rgba(0,0,0,.12)
+    border-radius:2rem;padding:.3rem .5rem;z-index:300;box-shadow:0 2px 8px rgba(0,0,0,.12)
   }
   .font-toggle{border:none;background:none;font-size:13px;font-weight:700;color:var(--text-muted);cursor:pointer;padding:.2rem .3rem;min-height:auto}
   .font-btn{border:none;background:none;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;padding:.2rem .4rem;min-height:auto}
   .font-btn:disabled{opacity:.3;cursor:default}
   .font-label{font-size:12px;color:var(--text-muted);min-width:2.8rem;text-align:center}
+
+  /* Layout */
+  .panel-overlay{width:100%;border-left:none;top:0}
+  .gallery{column-width:unset;columns:2}
+  .alias-table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch}
+  .screenshot-card-ocr{font-size:13px}
+  .book-card-title{font-size:15px}
+  .book-card-meta{font-size:12px}
+  .log-entry{padding:.9rem 0}
+  .log-entry-title{font-size:15px}
+  .log-entry-detail{font-size:13px}
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   LANDSCAPE on a small screen (phones held sideways, ~16:9)
+   → show condensed sidebar, no bottom nav
+   ══════════════════════════════════════════════════════════════════════════ */
+@media (max-height:500px) and (orientation:landscape) {
+  :root{--sidebar-width:10rem;--gap:.6rem}
+  body{font-size:14px}
+
+  /* Keep grid layout but with a narrower sidebar */
+  .app{height:100svh}
+  .sidebar{overflow:hidden}
+
+  /* Hide verbose sidebar sections to save space */
+  .status-widget{display:none}
+  .sidebar-highlight{display:none}
+  .section-label{font-size:9px;margin-bottom:.2rem}
+  .sidebar-top{padding:.4rem .6rem}
+  .sidebar-scroll{padding:.4rem .6rem}
+  .nav-links{gap:1px;margin-bottom:.4rem}
+  .nav-links a{padding:.25rem .4rem;font-size:12px}
+  .book-index a{padding:.15rem .4rem;font-size:11px}
+  .sidebar-home-name{font-size:13px}
+  .sidebar-home-sub{display:none}
+
+  /* Bigger touch targets for finger use */
+  button{min-height:36px}
+  input[type=text],textarea{font-size:16px;min-height:36px}
+
+  /* Font size control floating bottom-right */
+  .font-ctrl{
+    display:flex;align-items:center;gap:4px;
+    position:fixed;bottom:.5rem;right:.5rem;
+    background:var(--bg-card);border:1px solid var(--border);
+    border-radius:2rem;padding:.2rem .4rem;z-index:300;box-shadow:0 2px 8px rgba(0,0,0,.12)
+  }
+  .font-toggle{border:none;background:none;font-size:12px;font-weight:700;color:var(--text-muted);cursor:pointer;padding:.15rem .25rem;min-height:auto}
+  .font-btn{border:none;background:none;font-size:12px;font-weight:700;color:var(--text);cursor:pointer;padding:.15rem .3rem;min-height:auto}
+  .font-btn:disabled{opacity:.3;cursor:default}
+  .font-label{font-size:11px;color:var(--text-muted);min-width:2.4rem;text-align:center}
 }

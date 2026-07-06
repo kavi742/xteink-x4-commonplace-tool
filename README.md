@@ -7,80 +7,17 @@ The service runs on your homelab server and writes Obsidian-formatted Markdown f
 ## Architecture
 
 ```mermaid
-flowchart TD
-    X4["Xteink X4\ne-ink reader"]
-
-    subgraph homelab["Homelab Server (Docker)"]
-        subgraph xteink_svc["xteink service :8090"]
-            watcher["watcher.py\npoll crosspoint.local"]
-            archiver["archiver.py\nBMP → PNG + OCR"]
-            vault_writer["vault_writer.py\nwrite Obsidian markdown"]
-            state["state.py\nSQLite dedup + highlights"]
-            koreader["koreader_sync.py\nKOReader sync server"]
-            api["api.py\nCRUD REST API"]
-            alias["alias.py\nhash → title resolver"]
-        end
-
-        subgraph web_ui["Web UI (SvelteKit static)"]
-            books["/books\ngallery + detail panel"]
-            log["/log\nreading diary"]
-            tbr["/tbr\nTo-Be-Read list"]
-            highlights["/highlights\ntext highlights"]
-            aliases["/aliases\nhash mapping"]
-            search["/search\nfull-text search"]
-        end
-
-        subgraph jenkins_svc["Jenkins :8888"]
-            pipeline["Pipeline\nnpm build → cap sync\n→ gradlew assembleDebug"]
-        end
-
-        vault[("Obsidian Vault\n/data/vault")]
-        statedb[("SQLite\nstate.db + koreader.db")]
-        apk["app-debug.apk\nbuild artifact"]
-    end
-
-    subgraph clients["Clients"]
-        obsidian["Obsidian\nlaptop / phone"]
-        android["Android App\nCapacitor wrapper"]
-        browser["Browser\nweb UI"]
-    end
-
-    github["GitHub\nrepo"]
-
-    %% Device → service
-    X4 -- "File Transfer mode\n(Calibre Wireless :81)" --> watcher
-    X4 -- "KOReader sync\nPOST /syncs/progress" --> koreader
-
-    %% Archiving pipeline
-    watcher --> archiver
-    archiver --> vault_writer
-    archiver --> alias
-    alias --> state
-    vault_writer --> vault
-    vault_writer --> state
-    archiver -- "ntfy.sh push\n(optional)" --> clients
-
-    %% KOReader sync pipeline
-    koreader --> state
-    koreader --> vault_writer
-
-    %% API + Web UI
-    api --> statedb
-    api --> vault
-    web_ui --> api
-    browser --> web_ui
-
-    %% State DB
-    state --> statedb
-
-    %% Syncthing
-    vault -- "Syncthing" --> obsidian
-
-    %% Jenkins CI/CD
-    github -- "poll / webhook" --> pipeline
-    pipeline -- "npm build\ncap sync\ngradlew" --> apk
-    apk --> android
+flowchart LR
+    X4["Xteink X4"] -- "File Transfer" --> svc["Homelab Service\n:8090"]
+    X4 -- "KOReader sync" --> svc
+    svc --> vault[("Obsidian Vault")]
+    vault -- "Syncthing" --> obsidian["Obsidian\nlaptop / phone"]
+    svc --> webui["Web UI"]
+    webui --> browser["Browser"]
+    webui -- "Jenkins CI" --> apk["Android APK"]
 ```
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the full component diagram.
 
 ## What It Does
 

@@ -6,6 +6,10 @@ web/.svelte-kit/
 # --- Secrets ---
 test_scripts/.env.jenkins
 !test_scripts/.env.jenkins.example
+
+# --- Misc ---
+jenkins-cli.jar
+web/README.md
 __pycache__/
 *.py[cod]
 *.egg-info/

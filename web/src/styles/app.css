@@ -77,3 +77,61 @@ img{display:block;max-width:100%}
 .sidebar-home:hover{background:var(--active-bg)}
 .sidebar-home-name{font-size:14px;font-weight:700;color:var(--text);letter-spacing:-.01em;line-height:1.2}
 .sidebar-home-sub{font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.08em}
+
+/* ── Touch baseline (all screens) ─────────────────────────────────────────── */
+button,a,[role=button]{-webkit-tap-highlight-color:transparent;touch-action:manipulation}
+
+/* ── Bottom nav (hidden on desktop) ───────────────────────────────────────── */
+.bottom-nav{display:none}
+
+/* ── Mobile layout ────────────────────────────────────────────────────────── */
+@media(max-width:768px){
+  :root{--gap:.75rem}
+  body{font-size:16px}
+
+  /* Stack app vertically; sidebar replaced by bottom nav */
+  .app{grid-template-columns:1fr;height:100svh}
+  .sidebar{display:none}
+  .main{padding-bottom:calc(3.75rem + env(safe-area-inset-bottom))}
+
+  /* Bottom nav bar */
+  .bottom-nav{
+    display:flex;
+    position:fixed;bottom:0;left:0;right:0;
+    background:var(--bg-sidebar);
+    border-top:1px solid var(--border);
+    padding-bottom:env(safe-area-inset-bottom);
+    z-index:200
+  }
+  .bottom-nav a{
+    flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    gap:3px;padding:.5rem .25rem;min-height:56px;
+    font-size:10px;color:var(--text-muted);text-decoration:none;border-radius:0
+  }
+  .bottom-nav a.active{color:var(--text);font-weight:700}
+  .bottom-nav a:hover{background:none;color:var(--text)}
+  .bottom-nav-icon{font-size:19px;line-height:1}
+
+  /* Tap targets */
+  button{min-height:44px;padding:.5rem .9rem;font-size:15px}
+  input[type=text],textarea{font-size:16px;min-height:44px} /* 16px prevents iOS zoom */
+
+  /* Panel full-screen */
+  .panel-overlay{width:100%;border-left:none;top:0}
+
+  /* Gallery: 2 columns */
+  .gallery{column-width:unset;columns:2}
+
+  /* Larger card text */
+  .screenshot-card-ocr{font-size:13px}
+  .book-card-title{font-size:15px}
+  .book-card-meta{font-size:12px}
+
+  /* Scrollable tables */
+  .alias-table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch}
+
+  /* Log entries */
+  .log-entry{padding:.9rem 0}
+  .log-entry-title{font-size:15px}
+  .log-entry-detail{font-size:13px}
+}

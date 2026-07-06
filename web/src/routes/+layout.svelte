@@ -119,6 +119,29 @@
 	</main>
 </div>
 
+<nav class="bottom-nav">
+	<a href="/books" class:active={isActive('/books')}>
+		<span class="bottom-nav-icon">◧</span>
+		<span>Books</span>
+	</a>
+	<a href="/log" class:active={isActive('/log')}>
+		<span class="bottom-nav-icon">◈</span>
+		<span>Log</span>
+	</a>
+	<a href="/search" class:active={isActive('/search')}>
+		<span class="bottom-nav-icon">⌕</span>
+		<span>Search</span>
+	</a>
+	<a href="/highlights" class:active={isActive('/highlights')}>
+		<span class="bottom-nav-icon">✦</span>
+		<span>Highlights</span>
+	</a>
+	<a href="/tbr" class:active={isActive('/tbr')}>
+		<span class="bottom-nav-icon">○</span>
+		<span>TBR</span>
+	</a>
+</nav>
+
 {#if panel.id !== null}
 	<div class="panel-overlay">
 		<ScreenshotPanel />

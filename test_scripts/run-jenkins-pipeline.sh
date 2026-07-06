@@ -11,22 +11,30 @@
 
 set -euo pipefail
 
-JENKINS_URL="http://192.168.86.153:8888"
-JENKINS_USER="kavi741"
-JENKINS_TOKEN_FILE="$HOME/.jenkins-token"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ENV_FILE="$SCRIPT_DIR/.env.jenkins"
+
+if [ ! -f "$ENV_FILE" ]; then
+    echo "ERROR: $ENV_FILE not found."
+    echo "  Copy test_scripts/.env.jenkins.example and fill in your values."
+    exit 1
+fi
+
+# shellcheck source=.env.jenkins
+# shellcheck disable=SC1091
+. "$ENV_FILE"
+
 JOB_NAME="xteink-commonplace-android"
 CLI_JAR="/tmp/jenkins-cli.jar"
 
 # ---- Preflight checks -------------------------------------------------------
 
-if [ ! -f "$JENKINS_TOKEN_FILE" ]; then
-    echo "ERROR: $JENKINS_TOKEN_FILE not found."
-    echo "  Generate a token: Jenkins UI → User menu → Security → Add new token"
-    echo "  Then: echo 'your-token' > $JENKINS_TOKEN_FILE && chmod 600 $JENKINS_TOKEN_FILE"
+if [ -z "${JENKINS_TOKEN:-}" ]; then
+    echo "ERROR: JENKINS_TOKEN not set in $ENV_FILE"
     exit 1
 fi
 
-TOKEN=$(cat "$JENKINS_TOKEN_FILE")
+TOKEN="$JENKINS_TOKEN"
 
 # Download CLI jar into container if not already there
 docker exec jenkins bash -c "

@@ -44,4 +44,6 @@ services:
       - "50000:50000"
     volumes:
       - /srv/docker/data/jenkins:/var/jenkins_home
+    environment:
+      - TZ=America/Toronto
     restart: unless-stopped

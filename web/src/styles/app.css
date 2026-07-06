@@ -83,6 +83,7 @@ button,a,[role=button]{-webkit-tap-highlight-color:transparent;touch-action:mani
 
 /* ── Bottom nav (hidden on desktop) ───────────────────────────────────────── */
 .bottom-nav{display:none}
+.font-ctrl{display:none}
 
 /* ── Mobile layout ────────────────────────────────────────────────────────── */
 @media(max-width:768px){

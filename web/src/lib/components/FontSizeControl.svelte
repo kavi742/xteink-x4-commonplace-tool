@@ -45,9 +45,3 @@
 	{/if}
 	<button class="font-toggle" onclick={() => open = !open} aria-label="Font size">Aa</button>
 </div>
-
-<style>
-	.font-ctrl {
-		display: none; /* shown only on mobile via app.css media query */
-	}
-</style>

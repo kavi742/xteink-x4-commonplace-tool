@@ -9,6 +9,13 @@ pipeline {
         disableConcurrentBuilds()
     }
 
+    triggers {
+        // Poll GitHub every 5 minutes; fires a build only if new commits found.
+        // (Webhooks from GitHub require a publicly reachable Jenkins URL —
+        //  use Tailscale Funnel if you want true push triggers.)
+        pollSCM('H/5 * * * *')
+    }
+
     environment {
         ANDROID_HOME = '/opt/android-sdk'
         PATH         = "${env.ANDROID_HOME}/cmdline-tools/latest/bin:${env.ANDROID_HOME}/platform-tools:${env.PATH}"

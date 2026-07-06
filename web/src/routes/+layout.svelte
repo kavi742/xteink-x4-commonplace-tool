@@ -8,6 +8,7 @@
 	import type { HighlightWithMeta } from '$lib/api';
 	import ScreenshotPanel from '$lib/components/ScreenshotPanel.svelte';
 	import StatusWidget from '$lib/components/StatusWidget.svelte';
+	import FontSizeControl from '$lib/components/FontSizeControl.svelte';
 
 	let { children, data } = $props();
 	let { books } = $derived(data);
@@ -141,6 +142,8 @@
 		<span>TBR</span>
 	</a>
 </nav>
+
+<FontSizeControl />
 
 {#if panel.id !== null}
 	<div class="panel-overlay">

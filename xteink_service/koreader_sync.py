@@ -7,18 +7,25 @@ Endpoints
 POST /syncs/progress          — KOReader sends progress update
 PUT  /syncs/progress          — same (some KOReader versions use PUT)
 GET  /syncs/progress/{doc}    — KOReader queries last known position
-POST /users/create            — KOReader auth handshake (always succeeds)
-GET  /users/auth              — KOReader auth check   (always succeeds)
+POST /users/create            — KOReader auth handshake
+GET  /users/auth              — KOReader auth check
+
+Authentication
+--------------
+Set SYNC_USER and SYNC_PASSWORD env vars to require HTTP Basic Auth.
+Leave them unset to disable auth (e.g. when Tailscale is the only gate).
 """
 import asyncio
 import logging
 import os
+import secrets
 import sqlite3
 from datetime import date as DateType
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Annotated, Optional
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -35,6 +42,31 @@ _web_build = _pathlib.Path(__file__).parent.parent / "web" / "build"
 if _web_build.exists():
     from fastapi.staticfiles import StaticFiles
     app.mount("/app", StaticFiles(directory=str(_web_build), html=True), name="webapp")
+
+_basic = HTTPBasic(auto_error=False)
+
+_SYNC_USER = os.getenv("SYNC_USER", "")
+_SYNC_PASS = os.getenv("SYNC_PASSWORD", "")
+_AUTH_REQUIRED = bool(_SYNC_USER and _SYNC_PASS)
+
+
+def _require_auth(creds: Annotated[HTTPBasicCredentials | None, Depends(_basic)]) -> None:
+    """Validate Basic Auth when SYNC_USER/SYNC_PASSWORD are configured."""
+    if not _AUTH_REQUIRED:
+        return
+    if creds is None:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED,
+                            headers={"WWW-Authenticate": "Basic"})
+    ok = (
+        secrets.compare_digest(creds.username.encode(), _SYNC_USER.encode())
+        and secrets.compare_digest(creds.password.encode(), _SYNC_PASS.encode())
+    )
+    if not ok:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED,
+                            headers={"WWW-Authenticate": "Basic"})
+
+
+Auth = Annotated[None, Depends(_require_auth)]
 
 
 # ------------------------------------------------------------------ #
@@ -172,7 +204,7 @@ async def health():
 
 @app.post("/users/create")
 @app.get("/users/auth")
-async def auth_stub():
+async def auth_stub(_: Auth):
     return {"authorized": "OK"}
 
 
@@ -182,7 +214,7 @@ async def auth_stub():
 
 @app.post("/syncs/progress")
 @app.put("/syncs/progress")
-async def put_progress(update: ProgressIn):
+async def put_progress(update: ProgressIn, _: Auth):
     """Receive a reading position from KOReader and store it."""
     record = _store.upsert(
         document=update.document,
@@ -252,7 +284,7 @@ async def _write_progress_to_vault(update: ProgressIn) -> None:
 
 
 @app.get("/syncs/progress/{document:path}")
-async def get_progress(document: str):
+async def get_progress(document: str, _: Auth):
     """Return the last known position for a document."""
     record = _store._latest(document)
     if record is None:
@@ -261,6 +293,6 @@ async def get_progress(document: str):
 
 
 @app.get("/syncs/progress")
-async def list_progress():
+async def list_progress(_: Auth):
     """List recent progress updates (admin / debug)."""
     return _store.all()

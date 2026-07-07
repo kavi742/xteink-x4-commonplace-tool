@@ -25,6 +25,10 @@ services:
       - PUID=1000
       - PGID=1000
       - TZ=America/Toronto
+      # KOReader sync credentials — set both to enable Basic Auth.
+      # Leave commented out to disable auth (e.g. Tailscale-only access).
+      - SYNC_USER=xteink
+      - SYNC_PASSWORD=628080
     # Uncomment and set IP to resolve crosspoint.local inside the container:
     # extra_hosts:
     #   - "crosspoint.local:192.168.x.x"

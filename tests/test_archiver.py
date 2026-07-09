@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 import io
 
@@ -221,3 +221,92 @@ def test_ocr_image_returns_none_on_tesseract_error():
                side_effect=Exception("tesseract not found")):
         result = ScreenshotArchiver._ocr_image(png)
     assert result is None
+
+
+# ------------------------------------------------------------------ #
+# _group_consecutive                                                   #
+# ------------------------------------------------------------------ #
+
+def _shot(book: str, chapter: int, page: int, day: date = date(2026, 7, 4)):
+    """Build a (book, day, filepath) tuple with a parseable screenshot name."""
+    name = f"{book}_ch{chapter}_p{page}_10pct_480360.bmp"
+    return (book, day, f"/screenshots/{book}/{name}")
+
+
+def _pages(group):
+    """Page numbers of a group, in group order."""
+    return [
+        ScreenshotArchiver._parse_filename(item[3].rsplit("/", 1)[-1])["page"]
+        for item in group
+    ]
+
+
+def test_group_consecutive_merges_a_run():
+    groups = ScreenshotArchiver._group_consecutive(
+        [_shot("Pastoral", 8, 25), _shot("Pastoral", 8, 26), _shot("Pastoral", 8, 27)]
+    )
+    assert len(groups) == 1
+    assert _pages(groups[0]) == [25, 26, 27]
+
+
+def test_group_consecutive_breaks_on_page_gap():
+    groups = ScreenshotArchiver._group_consecutive(
+        [_shot("Pastoral", 8, 25), _shot("Pastoral", 8, 27)]
+    )
+    assert len(groups) == 2
+    assert all(len(g) == 1 for g in groups)
+
+
+def test_group_consecutive_separates_chapters():
+    groups = ScreenshotArchiver._group_consecutive(
+        [_shot("Pastoral", 8, 25), _shot("Pastoral", 9, 26)]
+    )
+    assert len(groups) == 2
+
+
+def test_group_consecutive_separates_books():
+    groups = ScreenshotArchiver._group_consecutive(
+        [_shot("BookA", 1, 1), _shot("BookB", 1, 2)]
+    )
+    assert len(groups) == 2
+
+
+def test_group_consecutive_sorts_out_of_order_pages():
+    groups = ScreenshotArchiver._group_consecutive(
+        [_shot("Pastoral", 8, 27), _shot("Pastoral", 8, 25), _shot("Pastoral", 8, 26)]
+    )
+    assert len(groups) == 1
+    assert _pages(groups[0]) == [25, 26, 27]
+
+
+def test_group_consecutive_unparseable_names_are_singletons():
+    day = date(2026, 7, 4)
+    groups = ScreenshotArchiver._group_consecutive([
+        ("Book", day, "/screenshots/Book/img001.bmp"),
+        ("Book", day, "/screenshots/Book/img002.bmp"),
+    ])
+    assert len(groups) == 2
+    assert all(len(g) == 1 for g in groups)
+
+
+def test_group_consecutive_caps_run_length():
+    shots = [_shot("Pastoral", 8, p) for p in range(1, 10)]  # 9 consecutive pages
+    groups = ScreenshotArchiver._group_consecutive(shots, max_run=6)
+    assert [len(g) for g in groups] == [6, 3]
+
+
+# ------------------------------------------------------------------ #
+# _stitch_pngs                                                         #
+# ------------------------------------------------------------------ #
+
+def test_stitch_pngs_stacks_vertically():
+    a = ScreenshotArchiver._bmp_to_png(_make_bmp(width=4, height=3))
+    b = ScreenshotArchiver._bmp_to_png(_make_bmp(width=6, height=5))
+    img = Image.open(io.BytesIO(ScreenshotArchiver._stitch_pngs([a, b])))
+    assert img.size == (6, 8)  # width = max(4, 6), height = 3 + 5
+
+
+def test_stitch_pngs_single_image_unchanged_size():
+    a = ScreenshotArchiver._bmp_to_png(_make_bmp(width=4, height=3))
+    img = Image.open(io.BytesIO(ScreenshotArchiver._stitch_pngs([a])))
+    assert img.size == (4, 3)

@@ -164,6 +164,13 @@ KOReader sync data (Phase 5) and screenshot data (Phase 6) both feed this.
 
 ## What's Next
 
+- [x] **Stitch consecutive-page screenshots** — `run_sync()` groups contiguous pages
+      (same book+day+chapter, capped at 6) via `_group_consecutive()`, vertically
+      concatenates them with `_stitch_pngs()`, joins per-page OCR with `\n\n`, and writes
+      one embed + one daily-note entry. Every constituent `device_path` is `mark_synced()`
+      so re-syncs don't re-stitch. Unparseable filenames / sequence gaps stay singletons.
+      Within one sync run only. Tested in `tests/test_archiver.py`.
+
 - [ ] **Essay per day** — fetch essay from web source, convert to EPUB (pandoc/ebooklib),
       push to X4 via Calibre Wireless upload. Web UI at `/essays` with source picker and queue.
 - [ ] **Android app** — wrap the SvelteKit web UI as a native Android app via Capacitor.

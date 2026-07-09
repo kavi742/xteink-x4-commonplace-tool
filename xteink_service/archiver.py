@@ -43,41 +43,61 @@ class ScreenshotArchiver:
                     await asyncio.sleep(5)
                     return
 
-                total = len(screenshots)
+                # ponytail: stitch consecutive pages within one sync run only;
+                # crossing sessions would mean rewriting already-written entries.
+                groups = self._group_consecutive(screenshots)
+                total = len(groups)
                 book_counts: dict[str, int] = {}
 
-                for idx, (book, day, filepath) in enumerate(screenshots, 1):
-                    if self._state.is_path_synced(filepath):
+                for gi, group in enumerate(groups, 1):
+                    book, day = group[0][1], group[0][2]
+
+                    # Download the not-yet-synced pages of this group
+                    pages = []  # (idx, filepath, content, content_hash)
+                    for idx, _book, _day, filepath in group:
+                        if self._state.is_path_synced(filepath):
+                            continue
+                        content = await self._download_file(session, filepath)
+                        content_hash = hashlib.sha256(content).hexdigest()
+                        if self._state.is_synced(filepath, content_hash):
+                            continue
+                        # Stream bytes through the status WebSocket — fills progress bar accurately
+                        await show(self._status_label(book, filepath, gi, total), data=content)
+                        pages.append((idx, filepath, content, content_hash))
+
+                    if not pages:
                         continue
 
-                    label = self._status_label(book, filepath, idx, total)
+                    # Convert + OCR each page; join OCR text across the run
+                    png_pages, ocr_parts = [], []
+                    for _idx, _fp, content, _hash in pages:
+                        png = self._bmp_to_png(content)
+                        text = self._ocr_image(png)
+                        png_pages.append(png)
+                        if text:
+                            ocr_parts.append(text)
 
-                    content = await self._download_file(session, filepath)
-                    content_hash = hashlib.sha256(content).hexdigest()
-
-                    if self._state.is_synced(filepath, content_hash):
-                        continue
-
-                    # Stream bytes through the status WebSocket — fills progress bar accurately
-                    await show(label, data=content)
-
-                    png_data = self._bmp_to_png(content)
-                    ocr_text = self._ocr_image(png_data)
+                    ocr_text = "\n\n".join(ocr_parts) or None
+                    png_data = png_pages[0] if len(png_pages) == 1 else self._stitch_pngs(png_pages)
                     if ocr_text:
                         png_data = self._embed_ocr_in_png(png_data, ocr_text)
 
-                    embed = self._vault.write_screenshot(book, day, png_data, idx)
+                    # Reuse the first unsynced page's listing slot as the filename index
+                    write_index = min(idx for idx, *_ in pages)
+                    embed = self._vault.write_screenshot(book, day, png_data, write_index)
                     self._vault.write_screenshot_meta(
-                        embed, filepath, content_hash, book, day.isoformat(), ocr_text
+                        embed, pages[0][1], pages[0][3], book, day.isoformat(), ocr_text
                     )
                     self._vault.append_to_daily_note(book, day, embed, ocr_text)
-                    self._state.mark_synced(
-                        filepath, content_hash, book, day.isoformat(), ocr_text,
-                        vault_png_path=embed,
-                    )
+                    for _idx, filepath, _content, content_hash in pages:
+                        self._state.mark_synced(
+                            filepath, content_hash, book, day.isoformat(), ocr_text,
+                            vault_png_path=embed,
+                        )
 
-                    book_counts[book] = book_counts.get(book, 0) + 1
-                    logger.info("Archived %s  ocr=%s", filepath,
+                    book_counts[book] = book_counts.get(book, 0) + len(pages)
+                    logger.info("Archived %s (%d page%s)  ocr=%s", embed, len(pages),
+                                "" if len(pages) == 1 else "s",
                                 f"{len(ocr_text)} chars" if ocr_text else "empty")
 
                 # Summary — one line per book, then DONE
@@ -119,6 +139,46 @@ class ScreenshotArchiver:
         if not m:
             return {}
         return {"chapter": int(m.group(1)), "page": int(m.group(2))}
+
+    @staticmethod
+    def _group_consecutive(screenshots, max_run: int = 6):
+        """
+        Collapse runs of consecutive pages into groups for stitching.
+
+        A run is same book, same day, same chapter, and contiguous page numbers
+        (from `_parse_filename`), capped at `max_run` pages. Screenshots whose
+        filename has no chapter/page, or that break the sequence, stay as
+        singleton groups — i.e. today's per-screenshot behaviour.
+
+        `screenshots` is the (book, day, filepath) list from `_list_screenshots`.
+        Returns a list of groups; each group is a list of (idx, book, day, filepath)
+        where idx is the 1-based listing position (the vault filename slot).
+        """
+        indexed = [
+            (i, book, day, filepath)
+            for i, (book, day, filepath) in enumerate(screenshots, 1)
+        ]
+
+        def page_key(item):
+            info = ScreenshotArchiver._parse_filename(item[3].rsplit("/", 1)[-1])
+            return (item[1], item[2], info.get("chapter", -1), info.get("page", -1))
+
+        groups, run, prev = [], [], None
+        for idx, book, day, filepath in sorted(indexed, key=page_key):
+            info = ScreenshotArchiver._parse_filename(filepath.rsplit("/", 1)[-1])
+            cur = (book, day, info["chapter"], info["page"]) if info else None
+            if (cur and run and prev
+                    and cur[:3] == prev[:3] and cur[3] == prev[3] + 1
+                    and len(run) < max_run):
+                run.append((idx, book, day, filepath))
+            else:
+                if run:
+                    groups.append(run)
+                run = [(idx, book, day, filepath)]
+            prev = cur
+        if run:
+            groups.append(run)
+        return groups
 
     @staticmethod
     def _status_label(book: str, filepath: str, idx: int, total: int) -> str:
@@ -171,6 +231,24 @@ class ScreenshotArchiver:
         img = Image.open(io.BytesIO(bmp_data))
         out = io.BytesIO()
         img.save(out, format="PNG")
+        return out.getvalue()
+
+    @staticmethod
+    def _stitch_pngs(pngs: list[bytes]) -> bytes:
+        """
+        Vertically concatenate PNGs in reading order into one image.
+        Width = widest page; narrower pages sit left-aligned on white. No scaling.
+        """
+        imgs = [Image.open(io.BytesIO(p)).convert("RGB") for p in pngs]
+        width = max(im.width for im in imgs)
+        height = sum(im.height for im in imgs)
+        canvas = Image.new("RGB", (width, height), (255, 255, 255))
+        y = 0
+        for im in imgs:
+            canvas.paste(im, (0, y))
+            y += im.height
+        out = io.BytesIO()
+        canvas.save(out, format="PNG")
         return out.getvalue()
 
     @staticmethod

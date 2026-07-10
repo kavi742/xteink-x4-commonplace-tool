@@ -22,7 +22,6 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 logger = logging.getLogger(__name__)
-logger = logging.getLogger(__name__)
 
 
 async def watcher_loop(host: str, vault: str, state_db: str) -> None:
@@ -37,12 +36,21 @@ async def watcher_loop(host: str, vault: str, state_db: str) -> None:
         archiver = ScreenshotArchiver(vault, host, state_db)
         await archiver.run_sync()
 
-        # Resolve any new KOReader hashes while device is reachable
+        # While the device's file API is reachable (File Transfer mode),
+        # resolve ONLY the KOReader hashes that have actually been synced — on
+        # demand. We deliberately do NOT bulk-preload every epub on the device:
+        # that floods the alias table with hundreds of never-read books.
+        # _scan_resolve lists the device files (no downloads) and maps only the
+        # filenames whose md5 matches a pending progress hash. Mirrored to X4.
         try:
             from xteink_service.alias import _scan_resolve
-            await _scan_resolve(state_db, koreader_db, host)
+            from xteink_service.status_display import x4_status
+            async with x4_status(host) as show:
+                await show("Resolving titles...")
+                await _scan_resolve(state_db, koreader_db, host)
+                await show("Titles resolved  DONE")
         except Exception as exc:
-            logger.debug("Alias scan skipped: %s", exc)
+            logger.debug("Alias resolve skipped: %s", exc)
 
         logger.info("Sync complete — waiting for X4 to go offline")
         await wait_for_offline(host)

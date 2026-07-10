@@ -36,7 +36,7 @@ async def main(host: str, vault: str, state_db: str) -> None:
 if __name__ == "__main__":
     host = sys.argv[1] if len(sys.argv) > 1 else os.getenv("DEVICE_HOST", "crosspoint.local")
     vault = sys.argv[2] if len(sys.argv) > 2 else os.getenv("VAULT_PATH", "/data/vault")
-    state_db = sys.argv[3] if len(sys.argv) > 3 else os.getenv("STATE_DB", "/tmp/state.db")
+    state_db = sys.argv[3] if len(sys.argv) > 3 else os.getenv("STATE_DB", "/data/state/state.db")
     try:
         asyncio.run(main(host, vault, state_db))
     except KeyboardInterrupt:

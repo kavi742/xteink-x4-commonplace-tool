@@ -12,7 +12,6 @@ set -euo pipefail
 VAULT_DIR="${1:-./vault}"
 
 mkdir -p \
-  "$VAULT_DIR/Commonplace" \
   "$VAULT_DIR/Reading Log" \
   "$VAULT_DIR/Books"
 

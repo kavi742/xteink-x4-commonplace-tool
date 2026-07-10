@@ -1,21 +1,27 @@
 services:
   xteink:
     build: .
-    # network_mode: host shares the host's full network stack.
-    # Required for two reasons:
-    #   1. crosspoint.local hostname resolution (host's avahi-daemon)
-    #   2. Tailscale — container inherits the host's Tailscale interface,
-    #      so it can reach the X4 at its Tailscale IP when away from home.
+    # network_mode: host shares the host's full network stack, so the container
+    # reaches the X4 directly on the LAN (and over Tailscale when away from
+    # home, inheriting the host's Tailscale interface). Resolution of
+    # crosspoint.local is handled by libnss-mdns in the image talking to the
+    # host's avahi-daemon via the socket mounted below — host networking alone
+    # does NOT give the container mDNS.
     network_mode: host
     volumes:
       - /srv/docker/data/syncthing/shares/xteink-vault:/data/vault
       - /srv/docker/data/xteink-x4-commonplace/config:/data/config
       - /srv/docker/data/xteink-x4-commonplace/state:/data/state
+      # Host avahi-daemon socket — nss-mdns in the container resolves
+      # crosspoint.local through the same avahi the host uses. The container
+      # has no avahi of its own, so without this .local never resolves.
+      - /run/avahi-daemon/socket:/run/avahi-daemon/socket
     environment:
-      # At home:      DEVICE_HOST=crosspoint.local  (default)
+      # At home:      DEVICE_HOST=crosspoint.local  (default; resolved via
+      #               libnss-mdns + the mounted host avahi socket)
       # Via Tailscale: DEVICE_HOST=100.x.x.x  (X4's Tailscale IP)
-      # Note: .local hostnames don't resolve inside the container.
-      # Use DEVICE_HOST=<static IP> or add to extra_hosts below.
+      # Fallback if mDNS is unavailable: set DEVICE_HOST to a static IP, or
+      # pin the name with extra_hosts below.
       - DEVICE_HOST=crosspoint.local
       - VAULT_PATH=/data/vault
       - STATE_DB=/data/state/state.db
@@ -25,11 +31,15 @@ services:
       - PUID=1000
       - PGID=1000
       - TZ=America/Toronto
-      # KOReader sync credentials — set both to enable Basic Auth.
-      # Leave commented out to disable auth (e.g. Tailscale-only access).
-      - SYNC_USER=xteink
-      - SYNC_PASSWORD=628080
-    # Uncomment and set IP to resolve crosspoint.local inside the container:
+      # KOReader sync credentials — set both to require HTTP Basic Auth.
+      # Kept disabled to match the automated tests (which pass with auth off)
+      # and because KOReader's kosync client authenticates with x-auth-user /
+      # x-auth-key headers, not HTTP Basic Auth — enabling these rejects every
+      # sync with 401. The endpoint is only reachable over LAN / Tailscale
+      # (network_mode: host), which is the intended gate.
+      # - SYNC_USER=xteink
+      # - SYNC_PASSWORD=628080
+    # Fallback if in-container mDNS ever fails — pin the device IP here:
     # extra_hosts:
     #   - "crosspoint.local:192.168.x.x"
     restart: unless-stopped

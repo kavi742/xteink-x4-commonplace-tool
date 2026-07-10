@@ -23,7 +23,7 @@ Auto-resolve by scanning epub files on the device (device must be reachable):
         --auto --device crosspoint.local
 
 DB paths default to the env vars STATE_DB and KOREADER_DB (or /data/state/state.db
-and /tmp/koreader.db if unset).
+and /data/state/koreader.db if unset).
 """
 import argparse
 import asyncio
@@ -223,12 +223,14 @@ async def _scan_resolve(state_db: str, koreader_db: str, device_host: str) -> No
             print(f"  Still unresolved: {h}  (map manually or try --auto)")
 
 
-async def _preload_all_aliases(state_db: str, device_host: str) -> None:
+async def _preload_all_aliases(state_db: str, device_host: str, show=None) -> None:
     """
     Proactively map md5(filename) → title for EVERY epub on the device.
     Called during File Transfer mode (port 80 open) so that the first
     KOReader sync for any book writes the vault immediately — no lag.
-    Skips filenames already in document_aliases.
+    Skips filenames already in document_aliases. If ``show`` (the async
+    callable from status_display.x4_status) is given, reports progress on
+    the X4 screen.
     """
     import hashlib
 
@@ -242,6 +244,9 @@ async def _preload_all_aliases(state_db: str, device_host: str) -> None:
 
     if not books:
         return
+
+    if show:
+        await show(f"Mapping {len(books)} book(s)...")
 
     sconn = _state_conn(state_db)
     existing = {
@@ -333,7 +338,7 @@ async def _auto_resolve(state_db: str, koreader_db: str, device_host: str) -> No
 def main() -> None:
     parser = argparse.ArgumentParser(description="Manage KOReader hash→title aliases")
     parser.add_argument("--state",    default=os.getenv("STATE_DB",    "/data/state/state.db"))
-    parser.add_argument("--koreader", default=os.getenv("KOREADER_DB", "/tmp/koreader.db"))
+    parser.add_argument("--koreader", default=os.getenv("KOREADER_DB", "/data/state/koreader.db"))
     parser.add_argument("--auto",   action="store_true",
                         help="Auto-resolve by scanning epub files on the device (downloads headers)")
     parser.add_argument("--scan",   action="store_true",

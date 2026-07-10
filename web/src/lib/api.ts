@@ -34,6 +34,14 @@ export interface ProgressEntry {
 	at: string;
 }
 
+export interface ReadingCalendarDay {
+	date: string;
+	percent_read: number;
+	start_pct: number;
+	end_pct: number;
+	sessions: number;
+}
+
 export interface Alias {
 	hash: string;
 	title: string;
@@ -132,6 +140,8 @@ function createApi(customFetch: Fetch = fetch) {
 			list: () => get<Book[]>('/api/books'),
 			screenshots: (slug: string) =>
 				get<Screenshot[]>(`/api/books/${encodeURIComponent(slug)}/screenshots`),
+			readingCalendar: (slug: string) =>
+				get<ReadingCalendarDay[]>(`/api/books/${encodeURIComponent(slug)}/reading-calendar`),
 		},
 
 		screenshots: {

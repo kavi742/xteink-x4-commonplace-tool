@@ -137,9 +137,9 @@ All services are independent but share state via a SQLite database.
 │ Obsidian Vault (filesystem)                                                │
 │                                                                              │
 │  vault/                                                                     │
-│    Commonplace/<Book Title>/                                                │
-│      YYYY-MM-DD.md  ← daily note with screenshot embeds                    │
-│      attachments/    ← PNG files                                           │
+│    Books/<Book Title>/                                                │
+│      YYYY-MM-DD-NN.png  ← screenshot images                    │
+│      YYYY-MM-DD-NN.json ← OCR + metadata sidecars                                           │
 │    Reading Log/                                                             │
 │      YYYY-MM-DD.md   ← daily reading diary                                 │
 │    Books/                                                                   │
@@ -175,9 +175,9 @@ Poll `http://crosspoint.local/api/status` every 5 seconds. When the device respo
 5. For each file, check sync state by path — skip download if already archived
 6. For new files, show progress: `START:Screenshot 3 of 5:1:/`
 7. Download via `/download?path=...` (URL-encoded)
-8. Convert BMP → PNG using Pillow
-9. Write PNGs to `Commonplace/<Book>/attachments/`
-10. Write/append to `Commonplace/<Book>/YYYY-MM-DD.md`
+8. Convert BMP → PNG using Pillow, then OCR with Tesseract (text embedded in the PNG's iTXt metadata)
+9. Write PNGs to `Books/<Title>/<date>-NN.png` (plus a `.json` sidecar)
+10. Write/append the embed to `Books/<Title>.md` under a `## YYYY-MM-DD` heading
 11. Mark synced in SQLite state table
 12. Show completion; close WebSocket
 13. Wait for device to go offline before the poll loop restarts
@@ -188,33 +188,34 @@ Poll `http://crosspoint.local/api/status` every 5 seconds. When the device respo
 
 ### 2. KOReader Sync Server
 
-**Protocol:** Implements KOReader sync API:
-- `POST /syncs/progress` — receives progress update
-- `GET /syncs/progress?doc_id=<id>` — query history
+**Protocol:** Implements the KOReader kosync API:
+- `POST`/`PUT /syncs/progress` — receive a progress update
+- `GET /syncs/progress/{document}` — return the last known position
+- `POST /users/create`, `GET /users/auth` — auth stubs KOReader expects
 
-**Data received:**
+**Data received (kosync fields):**
 ```json
 {
-  "doc_id": "hash_of_filename",
-  "page": 145,
-  "total_pages": 320,
-  "metadata": {
-    "title": "The Great Gatsby",
-    "author": "F. Scott Fitzgerald"
-  }
+  "document": "d41d8cd98f00b204e9800998ecf8427e",
+  "progress": "/body/DocFragment[8]/body/p[15]/text().234",
+  "percentage": 0.42,
+  "device": "Xteink X4",
+  "device_id": "abc123"
 }
 ```
 
-**Processing:**
-1. Store update in SQLite with timestamp
-2. Resolve book identity (use `title` from metadata if available)
-3. Write to `Reading Log/YYYY-MM-DD.md`: `- **Title** → Page X/Y (Z%)`
-4. Write to `Books/<Title>.md`: append timeline entry with frontmatter
+The `document` field is `md5(filename)`, not readable metadata — CrossPoint
+sends no title/author. Titles are resolved separately from the device file
+listing via the alias table (`alias.py --scan`).
 
-**Server options:**
-- Korrosync (Rust, Docker‑ready)
-- koreader-sync (Python, easy to modify)
-- Custom minimal implementation (integrated with main service)
+**Processing:**
+1. Store the update in SQLite (`progress_updates`) with a Unix timestamp
+2. Resolve the title from `document_aliases` (skip the vault write if unresolved)
+3. Write to `Reading Log/YYYY-MM-DD.md` and the all-time `Reading Log.md`: `- **Title** — X.X% → Y.Y%`
+4. Append a progress line to `Books/<Title>.md` under the `## YYYY-MM-DD` heading
+
+**Implementation:** a custom minimal kosync server integrated into the main
+service (`koreader_sync.py`), no external sync daemon.
 
 ### 3. On‑Device Status Display
 
@@ -244,28 +245,34 @@ await ws.recv()  # DONE (size=0 — no progress bar, message only)
 
 ### 4. Data Store & Web UI
 
-**Purpose:** SQLite is the primary source of truth. The Obsidian vault is
-derived from it and can be fully rebuilt via `POST /api/vault/export` if sync
-conflicts corrupt the markdown files.
+**Purpose:** SQLite is the source of truth for screenshot/progress metadata.
+The Obsidian vault markdown is derived from it and can be rebuilt via
+`POST /api/vault/rebuild` if sync conflicts corrupt the notes. The PNG bytes
+themselves live in the vault (referenced by `vault_png_path`); a per-PNG JSON
+sidecar keeps a DB-independent backup of the OCR text and metadata.
 
-**`synced_screenshots` table** stores everything needed for recovery:
-- `png_data BLOB` — full PNG bytes (self-contained, no vault dependency)
+**`synced_screenshots` table** stores what's needed to rebuild the notes:
+- `vault_png_path TEXT` — relative path to the PNG in the vault
 - `ocr_text TEXT` — raw Tesseract output
 - `ocr_corrected TEXT` — user-edited correction
 - `user_notes TEXT` — free-form annotations
 
-**`progress_updates` table** stores all KOReader sync events (unchanged).
+**`progress_updates` table** stores all KOReader sync events.
 
-**CRUD API** (FastAPI, same process as KOReader sync server):
+**CRUD API** (FastAPI, same process as the KOReader sync server):
 - `GET /api/books` — book list with counts
-- `GET /api/books/{book}/screenshots` — screenshot metadata (no blob)
-- `GET /api/screenshots/{id}/image` — serve PNG from DB
+- `GET /api/books/{slug}/screenshots` — screenshot metadata
+- `GET /api/screenshots/{id}/image` — serve the PNG from the vault filesystem
 - `PUT /api/screenshots/{id}` — edit OCR correction / notes
 - `GET /api/reading-log` — reading progress history
-- `POST /api/vault/export` — rebuild all vault markdown from DB
+- `GET`/`PUT /api/aliases` — hash → title mapping
+- `GET`/`POST`/`PUT`/`DELETE /api/tbr` — to-be-read list
+- `GET`/`POST`/`DELETE /api/screenshots/{id}/highlights` — text highlights
+- `GET /api/search` — full-text search over OCR / notes / highlights
+- `POST /api/vault/rebuild` — rebuild all vault markdown from the DB
 
-**Web frontend** — single HTML file at `/app`, served by FastAPI. Vanilla JS
-(`fetch()`), no build step, no framework.
+**Web frontend** — a SvelteKit app (`web/`) built with `adapter-static` to
+`web/build`, mounted at `/app` by FastAPI.
 
 ### 5. Observability Layer
 
@@ -286,7 +293,7 @@ conflicts corrupt the markdown files.
 
 ```
 Screenshot Flow:
-X4 → HTTP GET /download → BMP → Pillow → PNG → Vault/Commonplace/...
+X4 → HTTP GET /download → BMP → Pillow → PNG → Vault/Books/...
 
 Reading Progress Flow:
 X4 → HTTP POST /syncs/progress → Sync Server → SQLite → Vault/Reading Log/...

@@ -6,17 +6,25 @@
 xteink-x4-commonplace-tool/
 ├── xteink_service/
 │   ├── __init__.py
-│   ├── main.py                 # Entry point, orchestrates all services
+│   ├── __main__.py             # `python -m xteink_service` entry point
+│   ├── main.py                 # Orchestrates watcher loop + KOReader server
 │   ├── watcher.py              # Device poll loop
-│   ├── archiver.py             # Screenshot download, conversion, vault write
+│   ├── archiver.py             # Screenshot download, BMP→PNG, OCR, vault write
 │   ├── status_display.py       # WebSocket connection to X4 port 81
-│   ├── koreader_sync.py        # KOReader sync server (FastAPI)
+│   ├── koreader_sync.py        # KOReader kosync server (FastAPI) + ntfy notifications
+│   ├── api.py                  # CRUD + status REST API (mounted on the sync app)
 │   ├── vault_writer.py         # Obsidian vault file operations
-│   ├── state.py                # SQLite state management
-│   └── notifications.py        # ntfy.sh / Home Assistant
-├── config/                     # (config via environment variables, see docker-compose.yml)
+│   ├── state.py                # SQLite state (dedup + aliases + highlights + TBR)
+│   ├── alias.py                # Resolve KOReader hashes → book titles
+│   ├── document_id.py          # CrossPoint partial-MD5 hash algorithm
+│   ├── hash_books.py           # Browse device books, compute hashes
+│   ├── sync_once.py            # One-shot sync cycle (CLI / Docker)
+│   └── capture.py              # Single-screenshot capture test
+├── web/                        # SvelteKit web UI (built to web/build, served at /app)
 ├── tests/
-├── requirements.txt
+├── pyproject.toml              # Dependencies (managed with uv; locked in uv.lock)
+├── Dockerfile
+├── docker-compose.yml
 ├── README.md
 ├── ARCHITECTURE.md
 ├── PROJECT_SPEC.md
@@ -25,16 +33,22 @@ xteink-x4-commonplace-tool/
 
 ## Dependencies
 
-```txt
-# requirements.txt
-aiohttp>=3.9.0
-aiosqlite>=0.19.0
+Managed with [uv](https://docs.astral.sh/uv/) via `pyproject.toml` (locked in
+`uv.lock`) — there is no `requirements.txt`:
+
+```toml
+# pyproject.toml  [project].dependencies
+aiohttp>=3.9
 websockets>=12.0
-Pillow>=10.0.0
-fastapi>=0.104.0
-uvicorn>=0.24.0
-pydantic>=2.5.0
+pillow>=10.0
+pytesseract>=0.3.10   # calls the tesseract-ocr system binary (installed in the image)
+fastapi>=0.110
+uvicorn[standard]>=0.29
+aiosqlite>=0.20
 ```
+
+`pydantic` arrives transitively with FastAPI. Dev tools (`pytest`,
+`pytest-asyncio`, `httpx`, `ruff`) live in `[dependency-groups].dev`.
 
 ## Core Modules
 
@@ -177,87 +191,66 @@ class VaultWriter:
     def __init__(self, vault_path):
         self.vault_path = Path(vault_path)
 
-    def write_screenshot(self, book_title, date, png_data, index):
+    def write_screenshot(self, book_title, day, png_data, index):
         """
-        Write a PNG screenshot to the vault.
+        Write a PNG screenshot to Books/<Title>/<date>-NN.png.
 
-        Returns: relative path for Markdown embed
+        Returns: embed path used in the book note (e.g. 'Pastoral/2026-07-04-01.png')
         """
-        date_str = date.strftime("%Y-%m-%d")
+        date_str = day.strftime("%Y-%m-%d")
         filename = f"{date_str}-{index:02d}.png"
 
-        # Create directories
-        book_dir = self.vault_path / "Commonplace" / _sanitize(book_title)
-        attachments_dir = book_dir / "attachments"
-        attachments_dir.mkdir(parents=True, exist_ok=True)
+        book_slug = _sanitize(book_title)
+        book_dir = self.vault_path / "Books" / book_slug
+        book_dir.mkdir(parents=True, exist_ok=True)
+        (book_dir / filename).write_bytes(png_data)
 
-        # Write PNG file
-        filepath = attachments_dir / filename
-        with open(filepath, "wb") as f:
-            f.write(png_data)
+        return f"{book_slug}/{filename}"
 
-        return f"attachments/{filename}"
-
-    def append_to_daily_note(self, book_title, date, embed_path):
+    def append_to_daily_note(self, book_title, day, embed_path, ocr_text=None):
         """
-        Append a screenshot embed to the daily note for this book.
+        Append a screenshot embed to Books/<Title>.md under a ## YYYY-MM-DD heading.
         """
-        date_str = date.strftime("%Y-%m-%d")
-        book_dir = self.vault_path / "Commonplace" / _sanitize(book_title)
-        note_path = book_dir / f"{date_str}.md"
+        date_str = day.strftime("%Y-%m-%d")
+        book_slug = _sanitize(book_title)
+        note_path = self.vault_path / "Books" / f"{book_slug}.md"
 
-        # Create note if it doesn't exist
         if not note_path.exists():
             note_path.parent.mkdir(parents=True, exist_ok=True)
-            note_path.write_text(f"# {date_str} — {book_title}\n\n")
+            note_path.write_text(f'---\ntitle: "{book_title}"\n---\n')
 
-        # Append the embed
-        with open(note_path, "a") as f:
-            f.write(f"![[{embed_path}]]\n")
+        with note_path.open("a") as f:
+            f.write(f"\n## {date_str}\n\n![[{embed_path}]]\n")
 
-    def write_reading_log(self, date, title, page, total_pages):
-        """Append a reading log entry to the daily diary."""
-        date_str = date.strftime("%Y-%m-%d")
+    def write_reading_log(self, day, title, percentage, page=None,
+                          total_pages=None, progress=None,
+                          prev_percentage=None, prev_day=None):
+        """Write today's entry to Reading Log/<date>.md and the all-time
+        Reading Log.md — one line per book per day, replaced in place."""
+        date_str = day.strftime("%Y-%m-%d")
         log_path = self.vault_path / "Reading Log" / f"{date_str}.md"
-
-        # Create note if it doesn't exist
         if not log_path.exists():
             log_path.parent.mkdir(parents=True, exist_ok=True)
             log_path.write_text(f"# Reading Log — {date_str}\n\n")
 
-        percent = int((page / total_pages) * 100) if total_pages else 0
-        entry = f"- **{title}** → Page {page}/{total_pages} ({percent}%)\n"
+        body = (f"{prev_percentage:.1f}% → {percentage:.1f}%"
+                if prev_percentage is not None else f"{percentage:.1f}%")
+        entry = f"- **{title}** — {body}\n"
+        # ...upsert `entry` into both the daily and the all-time logs
 
-        with open(log_path, "a") as f:
-            f.write(entry)
-
-    def update_book_timeline(self, title, author, date, page, total_pages):
-        """Update the per‑book timeline with frontmatter."""
-        date_str = date.strftime("%Y-%m-%d")
+    def update_book_timeline(self, title, author, day, percentage, page=None,
+                             total_pages=None, progress=None, first_today_pct=None):
+        """Append/replace a progress line in Books/<Title>.md under ## <date>."""
+        date_str = day.strftime("%Y-%m-%d")
         book_path = self.vault_path / "Books" / f"{_sanitize(title)}.md"
-
-        percent = int((page / total_pages) * 100) if total_pages else 0
-        entry = f"- **{date_str}**: {percent}% (Page {page}/{total_pages})\n"
-
-        if book_path.exists():
-            # Append to existing timeline
-            with open(book_path, "a") as f:
-                f.write(entry)
-        else:
-            # Create new book note with frontmatter
-            frontmatter = f"""---
-title: "{title}"
-author: "{author or 'Unknown'}"
-status: "Reading"
-first_opened: {date_str}
-last_sync: {date.isoformat()}
----
-
-## Reading Timeline
-{entry}
-"""
+        if not book_path.exists():
             book_path.parent.mkdir(parents=True, exist_ok=True)
-            book_path.write_text(frontmatter)
+            book_path.write_text(
+                f'---\ntitle: "{title}"\nauthor: "{author or "Unknown"}"\n'
+                f'status: "Reading"\nfirst_opened: {date_str}\n---\n'
+            )
+        # ...append `- <pct>%` (or `- <from>% → <to>%`) under the ## <date>
+        #    heading, replacing today's line if present. See vault_writer.py.
 ```
 
 ### 4. Screenshot Archiver (`archiver.py`)
@@ -354,94 +347,36 @@ class ScreenshotArchiver:
 
 ### 5. KOReader Sync Server (`koreader_sync.py`)
 
+KOReader's kosync protocol sends an opaque `document` hash (`md5(filename)`),
+a `progress` position string and a `percentage` — no page numbers, no title.
+
 ```python
-import os
-import sqlite3
-from datetime import datetime
-from fastapi import FastAPI
-from pydantic import BaseModel
-
-app = FastAPI()
-
-class ProgressUpdate(BaseModel):
-    doc_id: str
-    page: int
-    total_pages: int = None
-    progress: float = None
-    device_id: str = None
-    metadata: dict = None
-
-class ProgressStore:
-    def __init__(self, db_path: str):
-        self.db_path = db_path
-        self._init_db()
-
-    def _init_db(self):
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS progress_updates (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    doc_id TEXT NOT NULL,
-                    page INTEGER,
-                    total_pages INTEGER,
-                    progress REAL,
-                    device_id TEXT,
-                    title TEXT,
-                    author TEXT,
-                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-
-    def store(self, update: ProgressUpdate):
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute(
-                """INSERT INTO progress_updates
-                   (doc_id, page, total_pages, progress, device_id, title, author)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    update.doc_id, update.page, update.total_pages, update.progress,
-                    update.device_id,
-                    update.metadata.get("title") if update.metadata else None,
-                    update.metadata.get("author") if update.metadata else None,
-                )
-            )
-
-    def query(self, doc_id: str = None) -> list[dict]:
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            if doc_id:
-                cur = conn.execute(
-                    "SELECT * FROM progress_updates WHERE doc_id = ? ORDER BY timestamp DESC",
-                    (doc_id,)
-                )
-            else:
-                cur = conn.execute(
-                    "SELECT * FROM progress_updates ORDER BY timestamp DESC LIMIT 100"
-                )
-            return [dict(row) for row in cur.fetchall()]
-
-_store = ProgressStore(os.getenv("STATE_DB", "/data/state/koreader.db"))
-_vault = VaultWriter(os.getenv("VAULT_PATH", "/data/vault"))
+class ProgressIn(BaseModel):
+    document:   str
+    progress:   str = "0"
+    percentage: float = 0.0
+    device:     str = ""
+    device_id:  str = ""
+    title:  Optional[str] = None   # CrossPoint leaves these empty
+    author: Optional[str] = None
 
 @app.post("/syncs/progress")
-async def sync_progress(update: ProgressUpdate):
-    """Receive progress update from KOReader."""
-    _store.store(update)
+@app.put("/syncs/progress")            # some KOReader builds use PUT
+async def put_progress(update: ProgressIn, _: Auth):
+    record = _store.upsert(update.document, update.progress, update.percentage, ...)
+    await _write_progress_to_vault(update)   # resolves title via the alias table
+    return record
 
-    title = update.metadata.get("title") if update.metadata else update.doc_id
-    author = update.metadata.get("author") if update.metadata else "Unknown"
-    date = datetime.now()
-
-    _vault.write_reading_log(date, title, update.page, update.total_pages or 0)
-    _vault.update_book_timeline(title, author, date, update.page, update.total_pages or 0)
-
-    return {"status": "ok"}
-
-@app.get("/syncs/progress")
-async def get_progress(doc_id: str = None):
-    """Query progress history."""
-    return _store.query(doc_id)
+@app.get("/syncs/progress/{document:path}")
+async def get_progress(document: str, _: Auth):
+    return _store._latest(document) or {}
 ```
+
+The `progress_updates` columns are `document, progress (TEXT), percentage
+(REAL), device, device_id, title, author, timestamp`. Auth is optional HTTP
+Basic (`SYNC_USER` / `SYNC_PASSWORD`); `/users/create` and `/users/auth` are
+stubbed because KOReader calls them. See `koreader_sync.py` for the full
+implementation (title resolution + ntfy notifications).
 
 ### 6. Main Service (`main.py`)
 
@@ -449,30 +384,34 @@ async def get_progress(doc_id: str = None):
 import asyncio
 import os
 import uvicorn
-from xteink_service.watcher import poll_for_device, wait_for_offline
 from xteink_service.archiver import ScreenshotArchiver
-from xteink_service.koreader_sync import app
+from xteink_service.koreader_sync import app as koreader_app
+from xteink_service.watcher import poll_for_device, wait_for_offline
+
+
+async def watcher_loop(host, vault, state_db):
+    while True:
+        await poll_for_device(host)
+        await ScreenshotArchiver(vault, host, state_db).run_sync()
+        # resolve any new KOReader hashes while the device is still reachable
+        await wait_for_offline(host)
+
 
 async def main():
-    host = os.getenv("DEVICE_HOST", "crosspoint.local")
-    vault = os.getenv("VAULT_PATH", "/data/vault")
-    state_db = os.getenv("STATE_DB", "/data/state/state.db")
-    poll_interval = int(os.getenv("POLL_INTERVAL", "5"))
+    host     = os.getenv("DEVICE_HOST", "crosspoint.local")
+    vault    = os.getenv("VAULT_PATH",  "/data/vault")
+    state_db = os.getenv("STATE_DB",    "/data/state/state.db")
+    port     = int(os.getenv("PORT", "8090"))
 
-    # Start KOReader sync server in background
-    config = uvicorn.Config(app, host="0.0.0.0", port=8090, log_level="info")
-    asyncio.create_task(uvicorn.Server(config).serve())
-
-    # Poll for device, sync, then wait for it to go offline before repeating
-    archiver = ScreenshotArchiver(vault, host, state_db)
-    while True:
-        await poll_for_device(host, interval=poll_interval)
-        await archiver.run_sync()
-        await wait_for_offline(host, interval=poll_interval)
-
-if __name__ == "__main__":
-    asyncio.run(main())
+    config = uvicorn.Config(koreader_app, host="0.0.0.0", port=port, log_level="info")
+    # Run the KOReader sync server + device watcher loop concurrently.
+    await asyncio.gather(
+        uvicorn.Server(config).serve(),
+        watcher_loop(host, vault, state_db),
+    )
 ```
+
+Run it with `python -m xteink_service` (see `__main__.py`).
 
 ## Configuration
 
@@ -497,38 +436,35 @@ All config via environment variables (set in `docker-compose.yml`):
 | `POST` | `/delete` | Delete a file (optional) |
 | `WS` | `ws://crosspoint.local:81/` | Status display (START/READY/DONE) |
 
-## KOReader Sync Protocol
+## KOReader Sync Protocol (kosync)
 
-**POST `/syncs/progress`** — Send progress update
+**POST / PUT `/syncs/progress`** — send a progress update
 
 Request body:
 ```json
 {
-  "doc_id": "hash_of_filename",
-  "page": 145,
-  "total_pages": 320,
-  "progress": 0.45,
-  "device_id": "x4-xxxxx",
-  "metadata": {
-    "title": "The Great Gatsby",
-    "author": "F. Scott Fitzgerald"
-  }
+  "document": "d41d8cd98f00b204e9800998ecf8427e",
+  "progress": "/body/DocFragment[8]/body/p[15]/text().234",
+  "percentage": 0.45,
+  "device": "Xteink X4",
+  "device_id": "x4-xxxxx"
 }
 ```
 
-Response:
-```json
-{"status": "ok"}
-```
+`document` is `md5(filename)`; CrossPoint sends no title/author (resolved via
+the alias table). The server echoes back the stored record.
 
-**GET `/syncs/progress?doc_id=<id>`** — Query history
+**GET `/syncs/progress/{document}`** — last known position
 
 Response:
 ```json
-[
-  {"id": 1, "doc_id": "...", "page": 145, "title": "The Great Gatsby", "timestamp": "2026-07-02T14:32:00Z"},
-  ...
-]
+{
+  "id": 1,
+  "document": "d41d8cd9...",
+  "progress": "/body/DocFragment[8]/...",
+  "percentage": 0.45,
+  "timestamp": 1751500800
+}
 ```
 
 ## WebSocket Status Protocol (Port 81)

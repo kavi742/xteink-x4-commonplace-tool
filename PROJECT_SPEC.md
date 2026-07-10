@@ -40,8 +40,8 @@ A homelab service that automatically archives screenshots and reading progress f
   out, per the project's graceful‑degradation principle.
 - The service MUST store the extracted OCR text in the state table so a
   re‑run never re‑OCRs an already‑synced file.
-- The service MUST write PNGs to `Commonplace/<Book>/attachments/`.
-- The service MUST write/append to `Commonplace/<Book>/YYYY-MM-DD.md`.
+- The service MUST write PNGs to `Books/<Title>/<date>-NN.png`.
+- The service MUST write/append screenshot embeds to `Books/<Title>.md` under a `## YYYY-MM-DD` date heading.
 - The service MUST mark synced files in the state table.
 
 ### FR3: On‑Device Status Display
@@ -52,7 +52,7 @@ A homelab service that automatically archives screenshots and reading progress f
 - The service MUST gracefully continue if the WebSocket connection fails.
 
 ### FR4: KOReader Sync Integration
-- The service MUST run a KOReader sync server (POST /syncs/progress, GET /syncs/progress).
+- The service MUST run a KOReader (kosync) server: `POST`/`PUT /syncs/progress`, `GET /syncs/progress/{document}`, plus the `/users/create` + `/users/auth` auth stubs KOReader expects.
 - The service MUST store incoming progress updates in a SQLite database.
 - The service MUST write progress to `Reading Log/YYYY-MM-DD.md`.
 - The service MUST update per‑book timeline in `Books/<Title>.md`.
@@ -108,7 +108,7 @@ A homelab service that automatically archives screenshots and reading progress f
 
 1. The X4 is on the same LAN as the homelab server (or reachable via Tailscale).
 2. The user has a Syncthing (or equivalent) sync set up between the homelab vault folder and Obsidian clients.
-3. The user has enabled "Send Document Metadata" in X4's KOReader Sync settings.
+3. The user relies on automatic title resolution from the device file listing (`alias.py --scan`); CrossPoint firmware has no "Send Document Metadata" option, so KOReader progress arrives with empty title/author.
 4. The X4's File Transfer mode is used regularly enough that the 5‑10s poll catches it.
 5. The `tesseract-ocr` system binary is available in the deployment
    environment (bundled in the Docker image); OCR accuracy on e‑ink
@@ -134,41 +134,43 @@ A homelab service that automatically archives screenshots and reading progress f
 ### synced_screenshots (SQLite)
 | Column | Type | Description |
 |--------|------|-------------|
+| id | INTEGER | Primary key (autoincrement) |
 | device_path | TEXT | Path on the X4 SD card |
 | content_hash | TEXT | SHA‑256 hash of file content |
 | synced_at | TIMESTAMP | When it was synced |
 | book_title | TEXT | Book folder name |
 | sync_date | TEXT | Calendar day (YYYY-MM-DD) |
-| ocr_text | TEXT | Extracted text from Tesseract (nullable — empty if OCR skipped/failed) |
-| PRIMARY KEY | (device_path, content_hash) | |
+| ocr_text | TEXT | Extracted text from Tesseract (nullable) |
+| vault_png_path | TEXT | Relative path to the PNG in the vault |
+| ocr_corrected | TEXT | User-edited OCR correction (nullable) |
+| user_notes | TEXT | Free-form per-screenshot notes (nullable) |
+| _constraint_ | | UNIQUE(device_path, content_hash) |
 
 ### progress_updates (SQLite)
 | Column | Type | Description |
 |--------|------|-------------|
 | id | INTEGER | Primary key |
-| doc_id | TEXT | KOReader document ID |
-| page | INTEGER | Current page |
-| total_pages | INTEGER | Total pages |
-| progress | REAL | Progress (0.0‑1.0) |
+| document | TEXT | KOReader document hash (`md5(filename)`) |
+| progress | TEXT | KOReader position (XPath/CFI string) |
+| percentage | REAL | Progress (0.0‑1.0) |
+| device | TEXT | Device name |
 | device_id | TEXT | Device identifier |
-| title | TEXT | Book title (from metadata) |
-| author | TEXT | Book author (from metadata) |
-| timestamp | TIMESTAMP | When update was received |
+| title | TEXT | Book title (usually empty; resolved via alias table) |
+| author | TEXT | Book author (usually empty) |
+| timestamp | INTEGER | Unix epoch seconds when received |
 
 ## Vault Structure
 
 ```
 vault/
-  Commonplace/
-    <Book Title>/
-      YYYY-MM-DD.md          # Daily note: screenshot embeds + OCR text callouts
-      attachments/
-        YYYY-MM-DD-01.png    # Screenshots
-        YYYY-MM-DD-02.png
-  Reading Log/
-    YYYY-MM-DD.md            # Daily diary with reading progress
   Books/
-    <Book Title>.md          # Per‑book timeline with frontmatter
+    <Book Title>.md          # Screenshots + reading progress, interleaved by date
+    <Book Title>/
+      YYYY-MM-DD-01.png      # Screenshot images (OCR text in iTXt metadata)
+      YYYY-MM-DD-01.json     # JSON sidecar: device path, hash, OCR, timestamp
+  Reading Log/
+    YYYY-MM-DD.md            # Daily reading diary
+  Reading Log.md             # All-time reading log, newest day first
 ```
 
 ## Build Order

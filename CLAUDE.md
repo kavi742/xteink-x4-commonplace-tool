@@ -84,10 +84,10 @@ test_scripts/
 | 5 — KOReader sync server | done | FastAPI, `POST/PUT/GET /syncs/progress`, auth stubs, `ProgressStore`, live test confirmed |
 | 6a — Dedup state | done | `SyncState`, `synced_screenshots` + `document_aliases` tables, wired into `run_sync()` |
 | 6b — Document aliases | done | `md5(filename)` is the sync hash. `alias.py --scan` resolves all hashes from file listing, no downloads. Manual fallback: `alias.py <hash> "Title"` |
-| 7 — Vault writer integration | pending | wire KOReader progress into `write_reading_log` / `update_book_timeline`; interleave under same `## YYYY-MM-DD` headings as screenshots |
-| 8 — Observability | pending | ntfy.sh notifications, FastAPI `/status` endpoint |
-| 9 — Full data store + web UI | pending | PNG blobs, OCR corrections, user notes, CRUD API, single-page web UI with manual hash->title mapping |
-| 10 — Integration | pending | `main.py` entry point wiring all components; `python -m xteink_service` currently fails (empty `__init__.py`) |
+| 7 — Vault writer integration | done | KOReader progress wired into `write_reading_log` / `update_book_timeline`, interleaved under the same `## YYYY-MM-DD` headings as screenshots |
+| 8 — Observability | done | ntfy.sh notifications + FastAPI `/status` endpoint |
+| 9 — Full data store + web UI | done | CRUD API + SvelteKit web UI at `/app`; images served from the vault via `vault_png_path` (no DB blobs); OCR corrections, user notes, highlights, TBR, alias management |
+| 10 — Integration | done | `main.py` + `__main__.py` run the watcher loop and KOReader server together; `python -m xteink_service` works |
 
 ---
 

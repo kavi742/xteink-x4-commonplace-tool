@@ -29,7 +29,6 @@ if [ ! -f "$INIT_SCRIPT" ]; then
 else
 rm -rf "$VAULT_DIR"
 "$INIT_SCRIPT" "$VAULT_DIR" > /dev/null
-check "Commonplace/ exists"   "[ -d '$VAULT_DIR/Commonplace' ]"
 check "Reading Log/ exists"   "[ -d '$VAULT_DIR/Reading Log' ]"
 check "Books/ exists"         "[ -d '$VAULT_DIR/Books' ]"
 check ".stignore exists"      "[ -f '$VAULT_DIR/.stignore' ]"

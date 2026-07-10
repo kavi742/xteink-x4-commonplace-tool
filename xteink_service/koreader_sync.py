@@ -22,6 +22,7 @@ import secrets
 import sqlite3
 from datetime import date as DateType
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Annotated, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, status
@@ -36,12 +37,13 @@ app = FastAPI(title="xteink-service", version="1.0.0")
 from xteink_service.api import router as api_router  # noqa: E402
 app.include_router(api_router)
 
-# Serve the built SvelteKit web UI at /app (production)
+# The built SvelteKit web UI is served from the site root (/) at the bottom of
+# this module (see the SPA fallback). The app is built with an empty base path
+# — assets are referenced from /_app and links are root-absolute (/books, …) —
+# so it must be served from / rather than a sub-path, or every asset 404s and
+# the page renders blank.
 import pathlib as _pathlib
 _web_build = _pathlib.Path(__file__).parent.parent / "web" / "build"
-if _web_build.exists():
-    from fastapi.staticfiles import StaticFiles
-    app.mount("/app", StaticFiles(directory=str(_web_build), html=True), name="webapp")
 
 _basic = HTTPBasic(auto_error=False)
 
@@ -76,15 +78,21 @@ Auth = Annotated[None, Depends(_require_auth)]
 class ProgressStore:
     def __init__(self, db_path: str):
         self.db_path = db_path
-        self._init_db()
+        self._initialized = False
 
     def _connect(self) -> sqlite3.Connection:
-        """Open a fresh connection. Each call gets its own connection so a
-        deleted/replaced DB file is picked up automatically on next operation."""
+        """Open a fresh connection, creating the schema on first use. Each call
+        gets its own connection so a deleted/replaced DB file is picked up
+        automatically on the next operation. Schema init is deferred out of
+        __init__ so importing this module never touches the filesystem."""
+        if not self._initialized:
+            self._init_db()
+            self._initialized = True
         return sqlite3.connect(self.db_path)
 
     def _init_db(self) -> None:
-        with self._connect() as conn:
+        Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
+        with sqlite3.connect(self.db_path) as conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS progress_updates (
                     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -147,7 +155,7 @@ class ProgressStore:
 
 
 _store = ProgressStore(
-    os.getenv("KOREADER_DB", "/tmp/koreader.db")
+    os.getenv("KOREADER_DB", "/data/state/koreader.db")
 )
 
 
@@ -216,6 +224,14 @@ async def auth_stub(_: Auth):
 @app.put("/syncs/progress")
 async def put_progress(update: ProgressIn, _: Auth):
     """Receive a reading position from KOReader and store it."""
+    # De-dupe: KOReader re-syncs the same position periodically. If nothing has
+    # moved since the last sync for this document, don't log another identical
+    # reading-log entry (or re-write the vault).
+    last = _store._latest(update.document)
+    if last and last.get("progress") == update.progress \
+            and last.get("percentage") == update.percentage:
+        return last
+
     record = _store.upsert(
         document=update.document,
         progress=update.progress,
@@ -296,3 +312,41 @@ async def get_progress(document: str, _: Auth):
 async def list_progress(_: Auth):
     """List recent progress updates (admin / debug)."""
     return _store.all()
+
+
+# ------------------------------------------------------------------ #
+# Web UI (SvelteKit SPA) — served at the site root                     #
+# ------------------------------------------------------------------ #
+# Registered LAST so every API route above (/status, /api/*, /syncs/*,
+# /users/*, /health, /docs) is matched first. This block only serves the SPA
+# shell, its hashed assets, and client-side routes (/books, /log, /tbr, …).
+if _web_build.exists():
+    from fastapi.staticfiles import StaticFiles
+    from fastapi.responses import FileResponse, RedirectResponse
+
+    # Immutable, content-hashed JS/CSS bundles.
+    app.mount("/_app", StaticFiles(directory=str(_web_build / "_app")), name="assets")
+
+    _web_root = _web_build.resolve()
+    _index = _web_root / "index.html"
+
+    @app.get("/app")
+    @app.get("/app/{_rest:path}")
+    async def _legacy_app_redirect(_rest: str = ""):
+        """The UI used to live at /app; keep old bookmarks working."""
+        return RedirectResponse("/", status_code=307)
+
+    @app.get("/")
+    async def _spa_root():
+        return FileResponse(_index)
+
+    @app.get("/{full_path:path}")
+    async def _spa_fallback(full_path: str):
+        """Serve a real static file if one exists (robots.txt, etc.), else the
+        SPA shell so client-side routes resolve on hard refresh."""
+        if full_path:
+            candidate = (_web_root / full_path).resolve()
+            # Guard against path traversal outside the build directory.
+            if candidate.is_file() and candidate.is_relative_to(_web_root):
+                return FileResponse(candidate)
+        return FileResponse(_index)

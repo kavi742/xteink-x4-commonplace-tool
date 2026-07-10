@@ -171,6 +171,31 @@ KOReader sync data (Phase 5) and screenshot data (Phase 6) both feed this.
       so re-syncs don't re-stitch. Unparseable filenames / sequence gaps stay singletons.
       Within one sync run only. Tested in `tests/test_archiver.py`.
 
+- [x] **Per-book reading calendar** — give every book its own reading log,
+      visualised as a calendar / heatmap on the book detail page (`/books/{slug}`):
+      which days the book was read, and how much.
+      - Data: derive per-day reading from `progress_updates` for the book's
+        hash(es) (resolved via `document_aliases`). Group rows by calendar day
+        and compute the percentage delta (max − min that day), first/last
+        position, and session count. No schema change — reuses existing progress
+        data written by the KOReader sync server.
+      - API: `GET /api/books/{slug}/reading-calendar` →
+        `[{ "date": "YYYY-MM-DD", "percent_read": 4.2, "start_pct": 40.1,
+        "end_pct": 44.3, "sessions": 2 }]`.
+      - UI: a month / heatmap grid on the book page (GitHub-contributions style);
+        cell colour intensity = percent read that day, tooltip shows start → end %
+        and session count, days with no reading shown faint. Complements the
+        `Books/<Title>.md` timeline already written by `update_book_timeline()`.
+      - Navigation: on the reading log page (`/log`), each book entry is
+        clickable and opens that book's calendar (its `/books/{slug}` calendar
+        view), so you can jump from a logged day straight to the book's full
+        reading history.
+      - No new dependency (SvelteKit component + the existing SQLite data).
+      - Done (2026-07): `GET /api/books/{slug}/reading-calendar` (api.py) +
+        `web/src/lib/components/ReadingCalendar.svelte` heatmap on the book page
+        + clickable book titles on `/log`. Per-day amount = forward progress
+        from the alias-resolved hashes (first synced day measured from 0).
+
 - [ ] **Essay per day** — fetch essay from web source, convert to EPUB (pandoc/ebooklib),
       push to X4 via Calibre Wireless upload. Web UI at `/essays` with source picker and queue.
 - [ ] **Android app** — wrap the SvelteKit web UI as a native Android app via Capacitor.

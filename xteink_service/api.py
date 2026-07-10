@@ -175,6 +175,62 @@ async def list_screenshots(slug: str):
         raise HTTPException(status_code=404, detail=f"Book '{slug}' not found")
 
 
+@router.get("/api/books/{slug}/reading-calendar")
+async def reading_calendar(slug: str):
+    """Per-day reading activity for a book — powers the book-page calendar.
+
+    Resolves the book title (slug) to its KOReader document hash(es) via the
+    alias table, groups that book's progress updates by local calendar day, and
+    reports how much was read each day (forward progress since the previous
+    synced day; the first synced day is measured from the book's start), the
+    day's end position, and how many sync sessions occurred.
+    """
+    try:
+        with _state_conn() as conn:
+            hashes = [
+                r["hash"] for r in conn.execute(
+                    "SELECT hash FROM document_aliases WHERE title = ?", (slug,)
+                ).fetchall()
+            ]
+    except Exception:
+        hashes = []
+    if not hashes:
+        return []
+
+    placeholders = ",".join("?" for _ in hashes)
+    with _koreader_conn() as conn:
+        rows = conn.execute(
+            f"SELECT timestamp, percentage FROM progress_updates "
+            f"WHERE document IN ({placeholders})",
+            hashes,
+        ).fetchall()
+    if not rows:
+        return []
+
+    # Group percentages by local calendar day (matches the vault's local dates).
+    by_day: dict[str, list[float]] = {}
+    for r in rows:
+        day = datetime.fromtimestamp(r["timestamp"]).date().isoformat()
+        by_day.setdefault(day, []).append(r["percentage"])
+
+    out = []
+    prev_end = 0.0
+    for i, day in enumerate(sorted(by_day)):
+        pcts = by_day[day]
+        day_max = max(pcts)
+        start = 0.0 if i == 0 else prev_end
+        read = max(0.0, day_max - start)
+        out.append({
+            "date": day,
+            "percent_read": round(read * 100, 1),
+            "start_pct": round(start * 100, 1),
+            "end_pct": round(day_max * 100, 1),
+            "sessions": len(pcts),
+        })
+        prev_end = max(prev_end, day_max)
+    return out
+
+
 # ------------------------------------------------------------------ #
 # Phase 9 — Screenshots                                                #
 # ------------------------------------------------------------------ #

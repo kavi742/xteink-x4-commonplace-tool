@@ -1,10 +1,20 @@
 FROM python:3.12-slim
 
-# tesseract-ocr is a system binary, not a Python package — pytesseract
-# (in pyproject.toml) only calls out to it, so it has to be installed here.
+# System packages:
+#   tesseract-ocr — pytesseract shells out to this binary for OCR.
+#   libnss-mdns   — resolves crosspoint.local (.local / mDNS). The NSS module
+#                   talks to the host's avahi-daemon over the socket bind-
+#                   mounted in docker-compose.yml (the container has no avahi of
+#                   its own). Without libnss-mdns, .local names never resolve in
+#                   the image (nsswitch ships only "files dns"), which is why the
+#                   watcher never detected the X4 in production while the test
+#                   scripts (which resolve on the host and inject --add-host)
+#                   worked.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr \
-    && rm -rf /var/lib/apt/lists/*
+    libnss-mdns \
+    && rm -rf /var/lib/apt/lists/* \
+    && sed -i 's/^hosts:.*/hosts: files mdns4_minimal [NOTFOUND=return] dns/' /etc/nsswitch.conf
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 

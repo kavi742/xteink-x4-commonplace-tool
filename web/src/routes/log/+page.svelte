@@ -19,7 +19,7 @@
 		<div class="log-entry">
 			<div class="log-entry-title">
 				{#if entry.title_resolved}
-					{entry.title_resolved}
+					<a href="/books/{encodeURIComponent(entry.title_resolved)}">{entry.title_resolved}</a>
 				{:else}
 					<span style="color:var(--text-muted);font-family:var(--font-mono);font-size:12px">{entry.document.slice(0, 16)}…</span>
 					<a href="/aliases" style="font-size:11px;margin-left:.5rem;opacity:.7">→ map in aliases</a>

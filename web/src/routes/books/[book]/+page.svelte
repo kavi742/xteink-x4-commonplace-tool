@@ -1,9 +1,10 @@
 <script lang="ts">
 	import DateGroup from '$lib/components/DateGroup.svelte';
+	import ReadingCalendar from '$lib/components/ReadingCalendar.svelte';
 	import type { Screenshot } from '$lib/api';
 
 	let { data } = $props();
-	let { book, screenshots } = $derived(data);
+	let { book, screenshots, calendar } = $derived(data);
 	let filterQ = $state('');
 
 	let grouped = $derived.by(() => {
@@ -32,6 +33,13 @@
 	<h1 class="page-title" style="margin-bottom:0;flex:1">{book}</h1>
 	<span style="font-size:12px;color:var(--text-muted)">{visibleCount} / {screenshots.length}</span>
 </div>
+
+{#if calendar.length > 0}
+	<section style="margin-bottom:1.5rem">
+		<div class="section-label">Reading calendar</div>
+		<ReadingCalendar days={calendar} />
+	</section>
+{/if}
 
 <div style="margin-bottom:1rem">
 	<input

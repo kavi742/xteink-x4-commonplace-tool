@@ -20,7 +20,6 @@ Expected output:
 
 ```
 == vault structure ==
-  ok   - Commonplace/ exists
   ok   - Reading Log/ exists
   ok   - Books/ exists
   ok   - .stignore exists

@@ -83,7 +83,7 @@ Lazy code without its check is unfinished: non-trivial logic leaves ONE runnable
 ## Architecture Guidelines
 
 1. **Start simple** — Add complexity only when explicitly required
-2. **Prefer event-driven over polling** — Use mDNS for device discovery instead of polling
+2. **Poll for device discovery** — the X4's web server is only reachable in File Transfer mode, so the service polls `http://crosspoint.local/api/status`; there is no mDNS/zeroconf dependency (`network_mode: host` handles `.local` resolution on the host)
 3. **Idempotent operations** — Ensure sync operations can be run multiple times safely
 4. **Graceful degradation** — Services should work even if optional dependencies fail
 

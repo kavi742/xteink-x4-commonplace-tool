@@ -19,15 +19,13 @@ dependencies = [
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
-    "httpx2>=0.28",
+    "httpx>=0.28",
     "ruff>=0.5",
 ]
 
-# No source package exists yet — this keeps `uv sync`/`uv run` working
-# against just the dependency list without requiring an installable
-# xteink_service/ package on disk. Flip this to true (and add a
-# [build-system] + src layout) once the module in README's
-# `python -m xteink_service` actually exists.
+# The xteink_service/ package is run as a module (`python -m xteink_service`),
+# not installed, so there is no [build-system]. package = false tells uv to
+# resolve/install only the dependencies and skip building this project.
 [tool.uv]
 package = false
 

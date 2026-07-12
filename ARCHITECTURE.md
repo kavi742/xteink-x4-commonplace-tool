@@ -101,7 +101,7 @@ All services are independent but share state via a SQLite database.
 │  └────────┬─────────┘     └────────┬─────────┘     └────────┬─────────┘    │
 └───────────┼────────────────────────┼────────────────────────┼───────────────┘
             │ HTTP API               │ HTTP POST              │ WebSocket
-            │ /api/files, /download  │ /syncs/progress        │ START messages
+            │ /api/files, /download  │ /syncs/progress        │ (not used)
             ▼                        ▼                        ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │ Homelab Service (Python)                                                    │
@@ -109,7 +109,7 @@ All services are independent but share state via a SQLite database.
 │  ┌─────────────────────────────────────────────────────────────────────┐    │
 │  │ Device Watcher (poll every 5‑10s)                                    │    │
 │  │  • GET /api/status → device online?                                 │    │
-│  │  • Connect WebSocket port 81 → on‑device status                    │    │
+│  │  • Look up page counts (Open Library) for books                    │    │
 │  │  • GET /api/files?path=/screenshots → list screenshots             │    │
 │  │  • Download via /download?path=...                                 │    │
 │  │  • Convert BMP→PNG (Pillow)                                       │    │
@@ -168,23 +168,21 @@ Poll `http://crosspoint.local/api/status` every 5 seconds. When the device respo
 **Fallback:** If `crosspoint.local` DNS fails, set `DEVICE_HOST` env var to the device's static IP.
 
 **On detection:**
-1. Connect WebSocket to `ws://crosspoint.local:81/`
-2. Send `START:Syncing screenshots...:1:/` — appears on X4 screen
-3. List `/screenshots/` via `/api/files?path=/screenshots`
-4. Group files by (book, calendar day of mtime)
-5. For each file, check sync state by path — skip download if already archived
-6. For new files, show progress: `START:Screenshot 3 of 5:1:/`
-7. Download via `/download?path=...` (URL-encoded)
-8. Convert BMP → PNG using Pillow, then OCR with Tesseract (text embedded in the PNG's iTXt metadata)
-9. Write PNGs to `Books/<Title>/<date>-NN.png` (plus a `.json` sidecar)
-10. Write/append the embed to `Books/<Title>.md` under a `## YYYY-MM-DD` heading
-11. Mark synced in SQLite state table
-12. Show completion; close WebSocket
-13. Wait for device to go offline before the poll loop restarts
+1. List `/screenshots/` via `/api/files?path=/screenshots`
+2. Group files by (book, calendar day of mtime)
+3. For each file, check sync state by path — skip download if already archived
+4. Download via `/download?path=...` (URL-encoded)
+5. Convert BMP → PNG using Pillow, then OCR with Tesseract (text embedded in the PNG's iTXt metadata)
+6. Write PNGs to `Books/<Title>/<date>-NN.png` (plus a `.json` sidecar)
+7. Write/append the embed to `Books/<Title>.md` under a `## YYYY-MM-DD` heading
+8. Mark synced in SQLite state table
+9. Resolve book titles from the file listing, then look up page counts (Open Library / epub estimate) for the books being read
+10. Remove any leftover 0-byte junk files from the device root (`cleanup_device_junk`)
+11. Log progress server-side, then wait for the device to go offline before the poll loop restarts
 
 **State:** SQLite table `synced_screenshots` keyed by `(device_path, content_hash)`.
 
-**Fallback:** If WebSocket fails, continue without on‑device feedback.
+**Status:** progress is logged server-side (`docker compose logs`); the service does not write to the device screen (see §3).
 
 ### 2. KOReader Sync Server
 
@@ -217,31 +215,18 @@ listing via the alias table (`alias.py --scan`).
 **Implementation:** a custom minimal kosync server integrated into the main
 service (`koreader_sync.py`), no external sync daemon.
 
-### 3. On‑Device Status Display
+### 3. Sync Status (server-side)
 
-**Protocol:** WebSocket to port 81 (same as Calibre plugin uses).
+Sync progress is written to the service log (`X4 status: <message>`, visible via
+`docker compose logs`). It is **not** shown on the device.
 
-**Message flow:**
-```
-Client → START:message:size:path
-Server → READY
-Client → [binary data] (dummy byte optional)
-Server → PROGRESS:received:total
-Server → DONE / ERROR
-```
-
-**Display behavior:**
-- Shows "Uploading: <message>" on the X4 screen
-- Progress bar updates with `PROGRESS` messages
-- Message clears ~6 seconds after `DONE`
-
-**Usage:**
-```python
-ws = await websockets.connect("ws://crosspoint.local:81/")
-await ws.send("START:Screenshot 3 of 5:0:/")
-await ws.recv()  # DONE (size=0 — no progress bar, message only)
-# Screen shows the message text; no progress bar
-```
+**Why not on-device?** Port 81 accepts `START:name:size:path` frames, but that
+protocol is the device's Calibre-Wireless *file-upload* channel, not a status
+display: each "status" frame made the X4 save a 0-byte file named after the
+message at its root (e.g. `Resolving titles`, `Mapping 207 book(s)`). The service
+therefore no longer sends to port 81. `status_display.x4_status()` yields a
+`show(msg)` callable that just logs, and `cleanup_device_junk()` deletes any
+leftover 0-byte files from the device root during File Transfer.
 
 ### 4. Data Store & Web UI
 
@@ -259,12 +244,20 @@ sidecar keeps a DB-independent backup of the OCR text and metadata.
 
 **`progress_updates` table** stores all KOReader sync events.
 
+**`book_pages` table** caches each book's total page count (`title`,
+`total_pages`, `source`), populated during File Transfer from Open Library
+(`number_of_pages_median`) with an epub word-count estimate as fallback. Joined
+to `document_aliases`, it turns a reading percentage into a page number.
+
 **CRUD API** (FastAPI, same process as the KOReader sync server):
 - `GET /api/books` — book list with counts
 - `GET /api/books/{slug}/screenshots` — screenshot metadata
+- `GET /api/books/{slug}/reading-calendar` — per-day reading activity (with pages)
+- `GET /api/books/{slug}/reading-stats` — per-book position + page estimate
 - `GET /api/screenshots/{id}/image` — serve the PNG from the vault filesystem
 - `PUT /api/screenshots/{id}` — edit OCR correction / notes
-- `GET /api/reading-log` — reading progress history
+- `GET /api/reading-log` — reading progress history (each entry carries a page estimate)
+- `GET /api/reading-stats` — aggregate stats (percent + pages read, today/week/month)
 - `GET`/`PUT /api/aliases` — hash → title mapping
 - `GET`/`POST`/`PUT`/`DELETE /api/tbr` — to-be-read list
 - `GET`/`POST`/`DELETE /api/screenshots/{id}/highlights` — text highlights
@@ -272,7 +265,7 @@ sidecar keeps a DB-independent backup of the OCR text and metadata.
 - `POST /api/vault/rebuild` — rebuild all vault markdown from the DB
 
 **Web frontend** — a SvelteKit app (`web/`) built with `adapter-static` to
-`web/build`, mounted at `/app` by FastAPI.
+`web/build`, served at the site root `/` by FastAPI.
 
 ### 5. Observability Layer
 

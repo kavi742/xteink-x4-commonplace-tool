@@ -9,11 +9,13 @@ invocation. See [TESTING.md](TESTING.md) for the established pattern.
 - Unit tests: `docker run --rm xteink-service:dev python -m pytest ...`
 - Live device tests: `docker run --rm --network host xteink-service:dev ...`
 
-## X4 Status Display
+## Sync Status
 
-**No emoji in status messages.** The X4's Calibre Wireless display uses a
-limited bitmap font that renders emoji as blank boxes. Use plain ASCII only
-in all `show(...)` calls.
+Sync status is **logged server-side** (`X4 status: <msg>` via `docker compose
+logs`), not shown on the device. Port 81's `START:name:size:path` protocol is a
+file-upload channel, not a display, so status frames created 0-byte junk files at
+the device root. `status_display.x4_status()` yields a `show(msg)` that only logs,
+and `cleanup_device_junk()` clears any leftovers during File Transfer.
 
 ## Use Ponytail for YAGNI
 

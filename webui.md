@@ -46,6 +46,8 @@ Book index below nav links: alphabetical list of all book titles with screenshot
 
 ### `/books/[book]` — Book Detail
 
+- **Reading stats card**: current page (`p149 / ~175`), percent, days read, sessions
+- **Reading calendar**: month heatmap of days read (tooltips show the day's end page)
 - **Main column**: masonry grid of ScreenshotCards for that book
   - Sorted by date (newest first within each `## YYYY-MM-DD` group)
   - Date headings separate groups
@@ -54,9 +56,10 @@ Book index below nav links: alphabetical list of all book titles with screenshot
 
 ### `/log` — Reading Log
 
+- **Stats panel** (top): percent + pages read (today / week / month), book counts
 - **Main column**: timeline of KOReader progress entries
   - Grouped by date, newest first
-  - Each entry: book title, percentage, section marker (§N), timestamp
+  - Each entry: book title, percentage, page estimate (`p149 / ~175`), section marker (§N), timestamp
   - Resolved title shown; unresolved hash shown in muted style with "Map →" link
 - Clicking a book title navigates to `/books/[book]`
 

@@ -24,13 +24,14 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full component diagram.
 When you press **File Transfer** on your Xteink X4:
 
 - **Pulls screenshots** (BMP → PNG + Tesseract OCR) into `Books/<Title>.md` with inline text callouts — searchable in Obsidian
-- **Shows real-time progress** on the X4's screen during sync (same protocol as Calibre)
 - **Resolves book titles** from the device file listing (no manual mapping needed for new books)
+- **Looks up page counts** for the books you're reading (Open Library, with an epub word-count fallback) so reading percentages can be shown as page numbers
 
 When you sync KOReader progress:
 
 - **Writes reading log** to `Reading Log/YYYY-MM-DD.md` and `Reading Log.md` (all-time, newest first)
 - **Updates book timeline** in `Books/<Title>.md` with percentage and section marker
+- **Shows pages read** — the web UI turns each percentage into an estimated page (e.g. `85% → p149 / ~175`) in the reading log and per-book stats
 
 **No custom firmware. No app to install. Just press the button.**
 
@@ -101,7 +102,7 @@ Away from home? Install Tailscale on both the X4 and the server, then set `DEVIC
 
 ### 5. Use it
 
-- **Press File Transfer** → screenshots sync, progress bar appears on screen, book notes written
+- **Press File Transfer** → screenshots sync, titles + page counts resolve, book notes written
 - **Sync KOReader** → reading log updated automatically
 
 New books appear in the reading log after the first File Transfer session (when the service can scan the device file listing to map book hashes to titles).
@@ -183,10 +184,11 @@ uv run python -m xteink_service.alias --state /path/to/state.db --koreader /path
 
 ## Technologies
 
-- Python 3.12, `asyncio`, `aiohttp`, `websockets`
+- Python 3.12, `asyncio`, `aiohttp`
 - Pillow (BMP→PNG), `pytesseract` / Tesseract OCR
 - FastAPI + uvicorn (KOReader sync server, port 8090)
 - SQLite via `aiosqlite` (dedup + progress state)
+- Open Library (page-count lookup, no API key)
 - Obsidian (note-taking frontend, not on server)
 - Syncthing (vault sync to devices)
 

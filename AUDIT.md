@@ -27,7 +27,7 @@ Legend: `[ ]` todo · `[x]` done
   - [x] `ARCHITECTURE.md` §4
   - [x] `TODO.md` Phase 9 schema table
 - [x] **2.3 Web UI** "single HTML file / vanilla JS, no build step"
-      → SvelteKit built to `web/build`, mounted at `/app`
+      → SvelteKit built to `web/build`, served at the site root `/`
   - [x] `ARCHITECTURE.md` §4
 - [x] **2.4 KOReader schema** `doc_id/page/total_pages`
       → kosync `document/progress/percentage/device/device_id/title/author`

@@ -2,13 +2,13 @@
 
 ## Overview
 
-A homelab service that automatically archives screenshots and reading progress from the Xteink X4 e‑ink reader into an Obsidian vault, with real‑time on‑device feedback.
+A homelab service that automatically archives screenshots and reading progress from the Xteink X4 e‑ink reader into an Obsidian vault, with server‑side status logging and estimated page numbers.
 
 ## User Stories
 
 1. **As a reader**, when I press File Transfer on my X4, I want my screenshots to appear in my Obsidian vault automatically, organized by book and by day.
 
-2. **As a reader**, I want to see progress and status messages on the X4 screen while screenshots are syncing, so I know what's happening.
+2. **As a reader**, I want the service to look up each book's page count automatically, so my reading progress is shown as an estimated page number (e.g. `p149 / ~175`), not just a percentage.
 
 3. **As a reader**, I want my reading progress (page number, book title) to be automatically logged to a daily reading diary in Obsidian.
 
@@ -44,12 +44,16 @@ A homelab service that automatically archives screenshots and reading progress f
 - The service MUST write/append screenshot embeds to `Books/<Title>.md` under a `## YYYY-MM-DD` date heading.
 - The service MUST mark synced files in the state table.
 
-### FR3: On‑Device Status Display
-- The service MUST connect to WebSocket port 81 on the X4.
-- The service MUST send START messages to display status text.
-- The service MUST show progress updates during sync.
-- The service MUST show completion or error messages.
-- The service MUST gracefully continue if the WebSocket connection fails.
+### FR3: Sync Status (server-side)
+- The service MUST log sync progress server-side (visible via `docker compose logs`).
+- The service MUST NOT send status text to the device: port 81's `START:name:size:path` protocol is a Calibre-Wireless *file-upload* channel, and using it for status left 0-byte junk files at the device root.
+- The service MUST remove leftover 0-byte junk files from the device root during File Transfer (`cleanup_device_junk`).
+
+### FR3b: Page-Count Lookup
+- During File Transfer, the service MUST look up a total page count for each book that has reading progress — Open Library first, an epub word-count estimate as fallback.
+- The service MUST cache page counts (the `book_pages` table) so each book is looked up only once.
+- The service MUST expose page numbers derived from reading percentage (`percentage × total_pages`) in the reading log and per-book stats.
+- Page lookup failures MUST be non-fatal (a book simply has no page estimate).
 
 ### FR4: KOReader Sync Integration
 - The service MUST run a KOReader (kosync) server: `POST`/`PUT /syncs/progress`, `GET /syncs/progress/{document}`, plus the `/users/create` + `/users/auth` auth stubs KOReader expects.
@@ -84,7 +88,7 @@ A homelab service that automatically archives screenshots and reading progress f
 
 ### NFR2: Reliability
 - Failed downloads MUST retry on the next poll cycle.
-- WebSocket failures MUST NOT block screenshot sync.
+- Page-count lookup or status logging failures MUST NOT block screenshot sync.
 - State MUST be persisted to disk and survive restarts.
 
 ### NFR3: Maintainability
@@ -118,9 +122,7 @@ A homelab service that automatically archives screenshots and reading progress f
 ## User Interface
 
 ### On‑Device (X4 Screen)
-- "Uploading: <status message>" — displayed automatically when WebSocket START is sent.
-- Progress bar updates with PROGRESS messages.
-- "Completed" briefly after DONE.
+- None. The device screen is not used for status — its port-81 channel is a file-upload protocol, not a display (see FR3). Sync status is logged server-side instead.
 
 ### Status Page (FastAPI)
 - URL: `http://homelab.local:8090/status`
@@ -177,7 +179,7 @@ vault/
 
 1. Vault folder structure + Syncthing setup
 2. Device watcher (poll loop, log detection)
-3. WebSocket status display (manual test)
+3. Sync status logging (server-side)
 4. Screenshot archiver (list, download, convert, write)
 5. OCR integration (pytesseract, embedded in daily notes, graceful fallback)
 6. State persistence (SQLite)

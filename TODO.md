@@ -20,13 +20,13 @@
   - unit tests: 3/3 pass (`tests/test_watcher.py`)
   - live test when device is available: `python xteink_service/watcher.py [host]`
 
-## Phase 3: On‑Device Status Display
-- [x] Manually connect to `ws://crosspoint.local:81/`
-- [x] Send `START:Test message:1:/` and verify it appears on X4 screen
-- [x] Implement `x4_status()` async context manager in Python
-- [x] Test `show()` callable and graceful degradation
-  - unit tests: 3/3 pass (`tests/test_status_display.py`)
-  - live test: `bash test_scripts/test-phase3.sh`
+## Phase 3: Sync Status (server-side)
+- [x] ~~Send `START:...` over WebSocket port 81 to show status on the X4~~ — **removed**:
+      port 81 is the device's Calibre-Wireless *file-upload* channel, so each status
+      frame made the X4 save a 0-byte junk file named after the message at its root.
+- [x] `x4_status()` now logs server-side (`X4 status: <msg>`), never writing to the device
+- [x] `cleanup_device_junk()` — delete leftover 0-byte junk files from the device root during File Transfer
+- [x] Tests rewritten: `tests/test_status_display.py` (log-only + cleanup), 4/4 pass
 
 ## Phase 4: Screenshot Archiving
 - [x] Implement `_list_screenshots()` using `/api/files`
@@ -122,7 +122,10 @@ KOReader sync data (Phase 5) and screenshot data (Phase 6) both feed this.
 - [x] `GET /api/books/{book}/screenshots` — screenshot metadata (no blob)
 - [x] `GET /api/screenshots/{id}/image` — serve PNG from vault filesystem
 - [x] `PUT /api/screenshots/{id}` — update `ocr_corrected` and/or `user_notes`
-- [x] `GET /api/reading-log` — KOReader progress history
+- [x] `GET /api/reading-log` — KOReader progress history (each entry carries a page estimate)
+- [x] `GET /api/books/{slug}/reading-calendar` — per-day reading activity (with pages)
+- [x] `GET /api/books/{slug}/reading-stats` — per-book position + page estimate
+- [x] `GET /api/reading-stats` — aggregate reading stats (percent + pages read, today/week/month)
 - [x] `POST /api/vault/rebuild` — rebuild all vault markdown from DB
 - [x] `GET/PUT /api/aliases` — hash → title management
 - [x] `GET /api/aliases/unresolved` — hashes with no title mapping
@@ -159,7 +162,7 @@ KOReader sync data (Phase 5) and screenshot data (Phase 6) both feed this.
 - [x] Book titles with special characters — handled via `_sanitize()`
 - [x] FAT filesystem timestamps — current time used as fallback
 - [ ] File Transfer mode times out after idle minutes — reconnect not automatic
-- [ ] WebSocket status display may drop — graceful fallback in place, reconnect not implemented
+- [x] On-device status removed — port 81 is a file-upload channel; status now logged server-side, junk files cleaned up automatically
 - [ ] OCR accuracy varies with e-ink fonts and illustrations — best-effort, not authoritative
 
 ## What's Next
@@ -195,6 +198,21 @@ KOReader sync data (Phase 5) and screenshot data (Phase 6) both feed this.
         `web/src/lib/components/ReadingCalendar.svelte` heatmap on the book page
         + clickable book titles on `/log`. Per-day amount = forward progress
         from the alias-resolved hashes (first synced day measured from 0).
+
+- [x] **Page-count lookup + page numbers** (2026-07) — on File Transfer, look up each
+      read book's total pages (Open Library `number_of_pages_median`, with an epub
+      word-count estimate as fallback) and cache in the `book_pages` table.
+      `pages.page_at(pct, total)` turns a KOReader percentage into a page number.
+      Surfaced in the reading log (`p149 / ~175`), per-book stats
+      (`GET /api/books/{slug}/reading-stats`), the aggregate `GET /api/reading-stats`
+      (pages read today/week/month), and calendar tooltips. New modules:
+      `xteink_service/pages.py`, `xteink_service/book_pages.py` (+ `tests/test_pages.py`,
+      `tests/test_book_pages.py`). Query gotcha: `-` in "Title - Author" is an Open
+      Library (Lucene) NOT operator — sanitize before searching.
+
+- [x] **Fix status junk-files** (2026-07) — status frames on port 81 created 0-byte
+      files at the device root; status is now logged server-side and
+      `cleanup_device_junk()` removes leftovers during File Transfer.
 
 - [ ] **Essay per day** — fetch essay from web source, convert to EPUB (pandoc/ebooklib),
       push to X4 via Calibre Wireless upload. Web UI at `/essays` with source picker and queue.

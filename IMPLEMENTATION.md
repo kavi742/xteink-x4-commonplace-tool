@@ -10,7 +10,9 @@ xteink-x4-commonplace-tool/
 │   ├── main.py                 # Orchestrates watcher loop + KOReader server
 │   ├── watcher.py              # Device poll loop
 │   ├── archiver.py             # Screenshot download, BMP→PNG, OCR, vault write
-│   ├── status_display.py       # WebSocket connection to X4 port 81
+│   ├── status_display.py       # server-side sync-status logging + device junk cleanup
+│   ├── pages.py                # epub word-count → page estimate, page_at()
+│   ├── book_pages.py           # Open Library / word-count page-count lookup + cache
 │   ├── koreader_sync.py        # KOReader kosync server (FastAPI) + ntfy notifications
 │   ├── api.py                  # CRUD + status REST API (mounted on the sync app)
 │   ├── vault_writer.py         # Obsidian vault file operations
@@ -20,7 +22,7 @@ xteink-x4-commonplace-tool/
 │   ├── hash_books.py           # Browse device books, compute hashes
 │   ├── sync_once.py            # One-shot sync cycle (CLI / Docker)
 │   └── capture.py              # Single-screenshot capture test
-├── web/                        # SvelteKit web UI (built to web/build, served at /app)
+├── web/                        # SvelteKit web UI (built to web/build, served at site root /)
 ├── tests/
 ├── pyproject.toml              # Dependencies (managed with uv; locked in uv.lock)
 ├── Dockerfile
@@ -85,37 +87,26 @@ async def wait_for_offline(host: str, interval: int = 5) -> None:
             await asyncio.sleep(interval)
 ```
 
-### 1. Status Display (`status_display.py`)
+### 1. Sync Status (`status_display.py`)
+
+Status is logged server-side. Port 81's `START:name:size:path` is the device's
+file-upload channel (not a display), so sending status text there created 0-byte
+junk files at the device root. `show()` now just logs; `cleanup_device_junk()`
+removes leftovers during File Transfer.
 
 ```python
 import contextlib
-import websockets
+import logging
+
+logger = logging.getLogger(__name__)
 
 @contextlib.asynccontextmanager
 async def x4_status(host: str):
-    """
-    Async context manager: connect to the X4 status WebSocket (port 81).
-    Yields a show(message) callable; no-ops gracefully if connection fails.
-    """
-    ws = None
-    try:
-        ws = await websockets.connect(f"ws://{host}:81/")
-        async def show(message: str) -> None:
-            try:
-                await ws.send(f"START:{message}:1:/")
-                if await ws.recv() == "READY":
-                    await ws.send(b"X")
-                    await ws.recv()  # drain DONE / PROGRESS:1:1
-            except Exception:
-                pass
-        yield show
-    except Exception:
-        async def _noop(_: str) -> None:
-            pass
-        yield _noop  # connection failed — noop silently
-    finally:
-        if ws:
-            await ws.close()
+    """Yield a show(message, data=None) callable that logs status server-side.
+    host/data are accepted for backwards-compat and ignored (no device writes)."""
+    async def show(message: str, data: bytes | None = None) -> None:
+        logger.info("X4 status: %s", message)
+    yield show
 ```
 
 ### 2. State Management (`state.py`)
@@ -434,7 +425,7 @@ All config via environment variables (set in `docker-compose.yml`):
 | `GET` | `/api/files?path=/screenshots` | List screenshots by book folder |
 | `GET` | `/download?path=...` | Download a file |
 | `POST` | `/delete` | Delete a file (optional) |
-| `WS` | `ws://crosspoint.local:81/` | Status display (START/READY/DONE) |
+| `WS` | `ws://crosspoint.local:81/` | Device file-upload channel (not used — see status_display.py) |
 
 ## KOReader Sync Protocol (kosync)
 
@@ -467,21 +458,21 @@ Response:
 }
 ```
 
-## WebSocket Status Protocol (Port 81)
+## Port 81 (Calibre-Wireless file upload — not used)
 
 ```
-Client → START:message:size:path
-Server → READY
-Client → [binary data] (optional)
-Server → PROGRESS:received:total
-Server → DONE / ERROR
+Client → START:name:size:path   → device creates a file `name` at `path`
+Client → [size bytes]           → file contents
 ```
 
-**Screen behavior:** Displays "Uploading: message" with optional progress bar.
+Port 81 is the device's **file-upload** channel, not a status display. An earlier
+version abused it to show status text, which made the X4 save a 0-byte file named
+after each message at its root. The service no longer sends to port 81; sync
+status is logged server-side instead (see `status_display.py`).
 
 ## Error Handling
 
-- WebSocket failure: log warning, continue sync
+- Page-count lookup failure: non-fatal — the book simply has no page estimate
 - Download failure: retry on next poll
 - Vault write failure: retry, mark not synced
 - Sync server failure: log error, continue watching

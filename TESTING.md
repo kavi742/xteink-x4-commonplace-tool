@@ -73,34 +73,24 @@ via `--add-host`, so in-container mDNS is not required.
 
 ---
 
-## Phase 3 — On-Device Status Display
+## Phase 3 — Sync Status (server-side)
+
+Status is logged server-side, not shown on the device: port 81's
+`START:name:size:path` is a file-upload channel, not a display (see
+ARCHITECTURE.md §3). Unit tests cover the log-only `show()` and the device
+junk-file cleanup:
 
 ```bash
-# Default hostname and message:
-bash test_scripts/test-phase3.sh
-
-# Custom host or message:
-bash test_scripts/test-phase3.sh crosspoint.local "Syncing screenshots..."
+docker run --rm xteink-service:dev python -m pytest tests/test_status_display.py -v
 ```
 
-Runs in order: build → unit tests → graceful degradation check (no device needed)
-→ live message send (device must be in Calibre Wireless mode).
-
-Expected output:
+Expected: 4 passing —
 ```
-== build ==
-  ok   - image built (xteink-service:dev)
-== unit tests ==
-  ok   - pytest
-== graceful degradation ==
-  ok   - exits 0 when WebSocket connection is refused
-== live: send message to X4 screen (device required) ==
-  sending: Hello from xteink-service
-  resolved crosspoint.local → 192.168.x.x
-  ok   - message sent — verify it appeared on X4 screen
-
-Phase 3: all checks passed
+test_show_logs_and_never_touches_device PASSED
+test_cleanup_deletes_only_zero_byte_root_files PASSED
+test_cleanup_handles_unreachable_device PASSED
+test_cleanup_counts_only_successful_deletes PASSED
 ```
 
-**Pass criteria:** the message text appears in the Calibre Wireless status area on
-the X4 screen for ~5 seconds.
+**Pass criteria:** `show()` logs `X4 status: <msg>` and never opens a device
+connection; `cleanup_device_junk()` deletes only 0-byte files at the device root.

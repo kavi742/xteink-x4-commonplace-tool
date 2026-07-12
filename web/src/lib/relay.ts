@@ -7,6 +7,8 @@ export interface RelayStatus {
 	listenPort: number;
 	connections: number;
 	hotspotIp?: string | null;
+	mdns?: boolean;
+	mdnsName?: string;
 }
 
 interface RelayPluginDef {

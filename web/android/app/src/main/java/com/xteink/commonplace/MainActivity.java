@@ -19,8 +19,13 @@ public class MainActivity extends BridgeActivity {
     static final String DEFAULT_HOST = "100.114.210.37";
     static final int DEFAULT_PORT = 8090;
     static final int LISTEN_PORT = 8090;
+    // mDNS name advertised on the phone's hotspot so the X4 can use one fixed
+    // KOReader address (http://ghostbird.local:8090) on every network. Must
+    // match the homelab's avahi hostname.
+    static final String MDNS_NAME = "ghostbird";
 
     private TcpRelay relay;
+    private MdnsResponder mdns;
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -44,19 +49,41 @@ public class MainActivity extends BridgeActivity {
         SharedPreferences p = getSharedPreferences(PREFS, MODE_PRIVATE);
         String host = p.getString(KEY_HOST, DEFAULT_HOST);
         int port = p.getInt(KEY_PORT, DEFAULT_PORT);
-        if (relay != null && relay.isRunning()) {
-            if (relay.getUpstreamHost().equals(host) && relay.getUpstreamPort() == port) return;
-            relay.stop();
+        boolean restart = relay == null || !relay.isRunning()
+                || !relay.getUpstreamHost().equals(host) || relay.getUpstreamPort() != port;
+        if (restart) {
+            if (relay != null) relay.stop();
+            relay = new TcpRelay(host, port, LISTEN_PORT);
+            relay.start();
         }
-        relay = new TcpRelay(host, port, LISTEN_PORT);
-        relay.start();
+        syncMdns();
+    }
+
+    /**
+     * Advertise {@link #MDNS_NAME}.local on the phone's hotspot only. On the home
+     * LAN the real homelab already answers that name, so advertising there would
+     * clash — {@link RelayPlugin#detectApIp()} returns null off-hotspot.
+     */
+    private synchronized void syncMdns() {
+        String apIp = RelayPlugin.detectApIp();
+        if (apIp != null) {
+            if (mdns == null) mdns = new MdnsResponder(this, MDNS_NAME, LISTEN_PORT);
+            mdns.start(apIp);
+        } else if (mdns != null) {
+            mdns.stop();
+        }
     }
 
     synchronized void stopRelay() {
         if (relay != null) relay.stop();
+        if (mdns != null) mdns.stop();
     }
 
     synchronized TcpRelay getRelay() {
         return relay;
+    }
+
+    synchronized MdnsResponder getMdns() {
+        return mdns;
     }
 }

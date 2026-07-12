@@ -55,6 +55,9 @@ public class RelayPlugin extends Plugin {
         o.put("listenPort", MainActivity.LISTEN_PORT);
         o.put("connections", r != null ? r.getConnections() : 0);
         o.put("hotspotIp", detectHotspotIp());
+        MdnsResponder m = act.getMdns();
+        o.put("mdns", m != null && m.isRunning());
+        o.put("mdnsName", MainActivity.MDNS_NAME + ".local");
         return o;
     }
 
@@ -79,6 +82,31 @@ public class RelayPlugin extends Plugin {
                 }
             }
             return fallback;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * The phone's IPv4 on a genuine Access Point / tether interface only (no
+     * station-mode fallback). Non-null only while tethering — used to gate the
+     * mDNS responder so it never clashes with the real homelab on the home LAN.
+     */
+    static String detectApIp() {
+        try {
+            for (NetworkInterface ni : Collections.list(NetworkInterface.getNetworkInterfaces())) {
+                if (!ni.isUp() || ni.isLoopback()) continue;
+                String name = ni.getName() == null ? "" : ni.getName().toLowerCase();
+                boolean apLike = name.startsWith("ap") || name.startsWith("swlan")
+                        || name.startsWith("wlan1") || name.contains("tether") || name.contains("rndis");
+                if (!apLike) continue;
+                for (InetAddress addr : Collections.list(ni.getInetAddresses())) {
+                    if (addr instanceof Inet4Address && !addr.isLoopbackAddress()) {
+                        return addr.getHostAddress();
+                    }
+                }
+            }
+            return null;
         } catch (Exception e) {
             return null;
         }

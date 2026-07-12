@@ -42,9 +42,15 @@
 				<button onclick={save}>Save</button>
 			</div>
 			<p class="relaybar-hint">
-				Point the X4's KOReader sync at
-				<code>http://{status?.hotspotIp ?? "<phone hotspot IP>"}:{status?.listenPort ?? 8090}</code>.
-				Keep this app open while syncing.
+				{#if status?.mdns}
+					Keep the X4's KOReader sync set to
+					<code>http://{status.mdnsName}:{status?.listenPort ?? 8090}</code> —
+					one address that works on home Wi-Fi and this hotspot. Keep this app open while syncing.
+				{:else}
+					Point the X4's KOReader sync at
+					<code>http://{status?.hotspotIp ?? "<phone hotspot IP>"}:{status?.listenPort ?? 8090}</code>.
+					Keep this app open while syncing.
+				{/if}
 			</p>
 		{/if}
 	</div>

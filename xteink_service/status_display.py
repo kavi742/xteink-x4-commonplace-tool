@@ -2,7 +2,7 @@ import asyncio
 import contextlib
 import logging
 
-import websockets
+import aiohttp
 
 logger = logging.getLogger(__name__)
 
@@ -10,45 +10,75 @@ logger = logging.getLogger(__name__)
 @contextlib.asynccontextmanager
 async def x4_status(host: str):
     """
-    Async context manager: connect to the X4 status WebSocket (port 81).
-    Yields a show(message) callable; no-ops gracefully if connection fails.
+    Yield a ``show(message, data=None)`` status callable.
+
+    Historically this streamed ``START:<msg>:<size>:/`` frames to the X4's
+    port-81 WebSocket to show progress on the e-ink screen. That "protocol" is
+    actually the device's *file-upload* channel: every status message persisted
+    as a junk file at the device root (0-byte files like "Resolving titles",
+    "Mapping 207 book(s)", "9 from Fifteen-Dogs  DONE"). We now log status
+    server-side instead — visible in ``docker compose logs`` — and never write
+    to the device, so no junk files are created. The ``host`` and ``data``
+    parameters are accepted for backwards compatibility and ignored.
     """
-    ws = None
+    async def show(message: str, data: bytes | None = None) -> None:
+        logger.info("X4 status: %s", message)
+
+    yield show
+
+
+async def _delete_device_file(
+    session: aiohttp.ClientSession, host: str, path: str
+) -> bool:
+    """Delete one file on the device. Returns True on success.
+
+    The Crosspoint file API only documents GET, so try the conventional REST
+    delete shape; a 404/405 simply means the firmware doesn't support it.
+    """
     try:
-        # Strip port suffix if host was given as "ip:port" (e.g. in tests)
-        ws_host = host.split(":")[0]
-        ws = await websockets.connect(f"ws://{ws_host}:81/")
-        logger.debug("WebSocket connected to %s:81", host)
+        async with session.delete(
+            f"http://{host}/api/files",
+            params={"path": path},
+            timeout=aiohttp.ClientTimeout(total=10),
+        ) as resp:
+            return resp.status in (200, 204)
+    except Exception:
+        return False
 
-        async def show(message: str, data: bytes | None = None) -> None:
-            try:
-                if data is not None:
-                    # Genuine progress bar — stream actual bytes
-                    await ws.send(f"START:{message}:{len(data)}:/")
-                    if await ws.recv() != "READY":
-                        return
-                    chunk = 4096
-                    for i in range(0, len(data), chunk):
-                        await ws.send(data[i : i + chunk])
-                    await ws.recv()  # DONE
-                else:
-                    # Text-only status message, no progress bar
-                    await ws.send(f"START:{message}:0:/")
-                    await ws.recv()  # DONE
-            except Exception:
-                pass
 
-        yield show
-    except Exception as e:
-        logger.warning("Could not connect to X4 status display: %s", e)
+async def cleanup_device_junk(host: str, show=None) -> int:
+    """Remove leftover 0-byte status-message files at the device root.
 
-        async def _noop(_: str, data: bytes | None = None) -> None:
-            pass
-
-        yield _noop
-    finally:
-        if ws:
-            await ws.close()
+    Earlier versions streamed status text as ``START:<msg>:0:/``, which the
+    device's file-upload protocol saved as 0-byte files at ``/``. This deletes
+    them. Only 0-byte, non-directory entries **directly under the root** are
+    touched — book folders and their contents are never deleted. Returns the
+    number of files removed.
+    """
+    removed = 0
+    try:
+        async with aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=15)
+        ) as session:
+            async with session.get(
+                f"http://{host}/api/files", params={"path": ""}
+            ) as resp:
+                if resp.status != 200:
+                    return 0
+                items = await resp.json()
+            junk = [
+                it for it in items
+                if not it.get("isDirectory") and int(it.get("size", 0) or 0) == 0
+            ]
+            for it in junk:
+                if await _delete_device_file(session, host, f"/{it['name']}"):
+                    removed += 1
+                    logger.info("Removed device junk file: %s", it["name"])
+    except Exception as exc:
+        logger.debug("device junk cleanup skipped: %s", exc)
+    if removed and show:
+        await show(f"Removed {removed} junk file(s)")
+    return removed
 
 
 if __name__ == "__main__":
@@ -61,7 +91,6 @@ if __name__ == "__main__":
     async def _test() -> None:
         async with x4_status(_host) as show:
             await show(_msg)
-            await asyncio.sleep(5)  # keep visible on screen
 
     try:
         asyncio.run(_test())

@@ -37,7 +37,7 @@ async def main(host: str) -> None:
         async with aiohttp.ClientSession(timeout=timeout) as s:
             bmp = await a._download_file(s, path)
 
-        # Stream the BMP bytes through the WebSocket so the progress bar fills correctly
+        # show() logs status server-side; data= is ignored (see status_display.py)
         label = a._status_label(book, path, 1, 1)
         await show(label, data=bmp)
 

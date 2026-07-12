@@ -32,6 +32,9 @@ export interface ProgressEntry {
 	percentage_display: number;
 	title_resolved: string | null;
 	at: string;
+	total_pages: number | null;
+	page: number | null;
+	page_source: string | null;
 }
 
 export interface ReadingCalendarDay {
@@ -40,6 +43,25 @@ export interface ReadingCalendarDay {
 	start_pct: number;
 	end_pct: number;
 	sessions: number;
+	end_page: number | null;
+	pages_read: number | null;
+}
+
+export interface ReadingStats {
+	books: { started: number; in_progress: number; finished: number };
+	read_pct: { today: number; week: number; month: number };
+	pages_read: { today: number; week: number; month: number };
+	books_read: { today: number; week: number; month: number; year: number };
+}
+
+export interface BookReadingStats {
+	total_pages: number | null;
+	page_source: string | null;
+	current_pct: number;
+	current_page: number | null;
+	sessions: number;
+	days_read: number;
+	finished: boolean;
 }
 
 export interface Alias {
@@ -142,6 +164,8 @@ function createApi(customFetch: Fetch = fetch) {
 				get<Screenshot[]>(`/api/books/${encodeURIComponent(slug)}/screenshots`),
 			readingCalendar: (slug: string) =>
 				get<ReadingCalendarDay[]>(`/api/books/${encodeURIComponent(slug)}/reading-calendar`),
+			readingStats: (slug: string) =>
+				get<BookReadingStats>(`/api/books/${encodeURIComponent(slug)}/reading-stats`),
 		},
 
 		screenshots: {
@@ -182,6 +206,7 @@ function createApi(customFetch: Fetch = fetch) {
 
 		readingLog: {
 			list: (limit = 100) => get<ProgressEntry[]>(`/api/reading-log?limit=${limit}`),
+			stats: () => get<ReadingStats>('/api/reading-stats'),
 		},
 
 		aliases: {

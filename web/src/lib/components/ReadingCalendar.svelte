@@ -63,7 +63,12 @@
 		const d = byDate.get(iso);
 		if (!d) return label;
 		const amt = d.percent_read > 0 ? `read ${d.percent_read}%` : 'opened';
-		return `${label} · ${amt} · ${d.start_pct}% → ${d.end_pct}% · ${d.sessions} sync${d.sessions === 1 ? '' : 's'}`;
+		let s = `${label} · ${amt} · ${d.start_pct}% → ${d.end_pct}% · ${d.sessions} sync${d.sessions === 1 ? '' : 's'}`;
+		if (d.end_page != null) {
+			const pages = d.pages_read && d.pages_read > 0 ? ` (${d.pages_read}p)` : '';
+			s += ` · p${d.end_page}${pages}`;
+		}
+		return s;
 	}
 </script>
 
@@ -119,10 +124,10 @@
 	.cal-cell { width: 14px; height: 14px; border-radius: 2px; background: var(--bg-sidebar); border: 1px solid var(--border); }
 	.cal-cell.blank { background: transparent; border-color: transparent; }
 	.cal-cell.l0 { background: var(--bg-sidebar); }
-	.cal-cell.l1 { background: rgba(179, 129, 79, .30); border-color: transparent; }
-	.cal-cell.l2 { background: rgba(179, 129, 79, .55); border-color: transparent; }
-	.cal-cell.l3 { background: rgba(179, 129, 79, .78); border-color: transparent; }
-	.cal-cell.l4 { background: rgba(179, 129, 79, 1); border-color: transparent; }
+	.cal-cell.l1 { background: rgba(166, 218, 149, .28); border-color: transparent; }
+	.cal-cell.l2 { background: rgba(166, 218, 149, .5); border-color: transparent; }
+	.cal-cell.l3 { background: rgba(166, 218, 149, .75); border-color: transparent; }
+	.cal-cell.l4 { background: rgba(166, 218, 149, 1); border-color: transparent; }
 	.cal-legend { display: flex; align-items: center; gap: 3px; font-size: 10px; color: var(--text-muted); margin-top: .6rem; }
 	.cal-legend .cal-cell { width: 11px; height: 11px; }
 </style>

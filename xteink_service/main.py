@@ -44,11 +44,18 @@ async def watcher_loop(host: str, vault: str, state_db: str) -> None:
         # filenames whose md5 matches a pending progress hash. Mirrored to X4.
         try:
             from xteink_service.alias import _scan_resolve
-            from xteink_service.status_display import x4_status
+            from xteink_service.book_pages import resolve_book_pages
+            from xteink_service.status_display import cleanup_device_junk, x4_status
             async with x4_status(host) as show:
                 await show("Resolving titles...")
                 await _scan_resolve(state_db, koreader_db, host)
+                # Look up page counts (Open Library, epub estimate fallback) for
+                # books that are being read, so percentages become page numbers.
+                await resolve_book_pages(state_db, koreader_db, host, show)
                 await show("Titles resolved  DONE")
+            # Remove any 0-byte junk files left at the device root by the old
+            # status-display mechanism (harmless if there are none).
+            await cleanup_device_junk(host)
         except Exception as exc:
             logger.debug("Alias resolve skipped: %s", exc)
 

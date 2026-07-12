@@ -19,7 +19,7 @@ Requires STATE_DB, KOREADER_DB, VAULT_PATH env vars (defaulting to /data/*).
 import logging
 import os
 import sqlite3
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
@@ -57,6 +57,44 @@ def _koreader_conn() -> sqlite3.Connection:
     return conn
 
 
+def _pages_by_hash() -> dict[str, dict]:
+    """Map each KOReader document hash to its book's cached page count.
+
+    Joins document_aliases (hash -> title) with book_pages (title -> total_pages)
+    so reading percentages can be turned into page numbers. Returns
+    ``{hash: {"total_pages": int, "source": str}}``; empty if either table is
+    missing (e.g. no page lookup has run yet).
+    """
+    try:
+        from xteink_service.book_pages import get_page_counts
+        counts = get_page_counts(_state_db())
+        if not counts:
+            return {}
+        out: dict[str, dict] = {}
+        with _state_conn() as conn:
+            for row in conn.execute("SELECT hash, title FROM document_aliases"):
+                info = counts.get(row["title"])
+                if info:
+                    out[row["hash"]] = info
+        return out
+    except Exception:
+        return {}
+
+
+def _dedup_by_image(rows: list[dict]) -> list[dict]:
+    """Collapse stitched-page rows (same vault_png_path) to the first occurrence
+    so the same stitched image isn't returned once per constituent page."""
+    seen: set[str] = set()
+    out: list[dict] = []
+    for r in rows:
+        key = r.get("vault_png_path") or f"id:{r.get('id')}"
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(r)
+    return out
+
+
 # ------------------------------------------------------------------ #
 # Phase 8 — /status                                                    #
 # ------------------------------------------------------------------ #
@@ -71,7 +109,7 @@ async def status():
     try:
         with _state_conn() as conn:
             total = conn.execute(
-                "SELECT COUNT(*) FROM synced_screenshots"
+                "SELECT COUNT(DISTINCT COALESCE(vault_png_path, CAST(id AS TEXT))) FROM synced_screenshots"
             ).fetchone()[0]
             last_row = conn.execute(
                 "SELECT synced_at, book_title FROM synced_screenshots ORDER BY id DESC LIMIT 1"
@@ -83,7 +121,7 @@ async def status():
                 ).fetchall()
             ]
             today_count = conn.execute(
-                "SELECT COUNT(*) FROM synced_screenshots WHERE sync_date = ?",
+                "SELECT COUNT(DISTINCT COALESCE(vault_png_path, CAST(id AS TEXT))) FROM synced_screenshots WHERE sync_date = ?",
                 (today,),
             ).fetchone()[0]
         result["screenshots"] = {
@@ -145,7 +183,7 @@ async def list_books():
         with _state_conn() as conn:
             rows = conn.execute("""
                 SELECT book_title,
-                       COUNT(*)        AS screenshot_count,
+                       COUNT(DISTINCT COALESCE(vault_png_path, CAST(id AS TEXT))) AS screenshot_count,
                        MAX(synced_at)  AS last_synced,
                        MAX(sync_date)  AS last_date
                 FROM synced_screenshots
@@ -159,12 +197,27 @@ async def list_books():
 
 @router.get("/api/books/{slug}/screenshots")
 async def list_screenshots(slug: str):
-    """Screenshots for a book (matched by book_title)."""
+    """Screenshots for a book (matched by book_title).
+
+    Stitched screenshots write ONE image but mark each constituent page as its
+    own row (all sharing one vault_png_path, needed for sync dedup). Collapse
+    them to a single gallery entry per image (the lowest-id row) so the same
+    stitched image isn't shown once per page.
+    """
     try:
         with _state_conn() as conn:
             rows = conn.execute(
-                "SELECT * FROM synced_screenshots WHERE book_title = ? ORDER BY id",
-                (slug,),
+                """
+                SELECT * FROM synced_screenshots
+                WHERE book_title = ?
+                  AND id IN (
+                      SELECT MIN(id) FROM synced_screenshots
+                      WHERE book_title = ?
+                      GROUP BY COALESCE(vault_png_path, CAST(id AS TEXT))
+                  )
+                ORDER BY id
+                """,
+                (slug, slug),
             ).fetchall()
         if not rows:
             raise HTTPException(status_code=404, detail=f"Book '{slug}' not found")
@@ -213,6 +266,11 @@ async def reading_calendar(slug: str):
         day = datetime.fromtimestamp(r["timestamp"]).date().isoformat()
         by_day.setdefault(day, []).append(r["percentage"])
 
+    from xteink_service.pages import page_at
+    pages_by_hash = _pages_by_hash()
+    info = next((pages_by_hash[h] for h in hashes if h in pages_by_hash), None)
+    total_pages = info["total_pages"] if info else 0
+
     out = []
     prev_end = 0.0
     for i, day in enumerate(sorted(by_day)):
@@ -226,9 +284,65 @@ async def reading_calendar(slug: str):
             "start_pct": round(start * 100, 1),
             "end_pct": round(day_max * 100, 1),
             "sessions": len(pcts),
+            "end_page": page_at(day_max, total_pages) if total_pages else None,
+            "pages_read": (
+                page_at(day_max, total_pages) - page_at(start, total_pages)
+                if total_pages else None
+            ),
         })
         prev_end = max(prev_end, day_max)
     return out
+
+
+@router.get("/api/books/{slug}/reading-stats")
+async def book_reading_stats(slug: str):
+    """Per-book reading summary: current position + page estimate.
+
+    Resolves the book title to its KOReader hash(es), takes the furthest synced
+    position, and turns it into a page number using the cached page count
+    (Open Library, or a word-count estimate). ``total_pages``/``current_page``
+    are null when no page count is available yet.
+    """
+    try:
+        with _state_conn() as conn:
+            hashes = [
+                r["hash"] for r in conn.execute(
+                    "SELECT hash FROM document_aliases WHERE title = ?", (slug,)
+                ).fetchall()
+            ]
+    except Exception:
+        hashes = []
+    if not hashes:
+        return {
+            "total_pages": None, "page_source": None, "current_pct": 0.0,
+            "current_page": None, "sessions": 0, "days_read": 0, "finished": False,
+        }
+
+    placeholders = ",".join("?" for _ in hashes)
+    with _koreader_conn() as conn:
+        rows = conn.execute(
+            f"SELECT timestamp, percentage FROM progress_updates "
+            f"WHERE document IN ({placeholders})",
+            hashes,
+        ).fetchall()
+
+    from xteink_service.pages import page_at
+    pages_by_hash = _pages_by_hash()
+    info = next((pages_by_hash[h] for h in hashes if h in pages_by_hash), None)
+    total_pages = info["total_pages"] if info else None
+
+    current = max((r["percentage"] for r in rows), default=0.0)
+    days = {datetime.fromtimestamp(r["timestamp"]).date().isoformat() for r in rows}
+
+    return {
+        "total_pages": total_pages,
+        "page_source": info["source"] if info else None,
+        "current_pct": round(current * 100, 1),
+        "current_page": page_at(current, total_pages) if total_pages else None,
+        "sessions": len(rows),
+        "days_read": len(days),
+        "finished": current >= 0.95,
+    }
 
 
 # ------------------------------------------------------------------ #
@@ -320,15 +434,112 @@ async def reading_log(limit: int = 100):
     except Exception:
         pass
 
-    return [
-        {
+    from xteink_service.pages import page_at
+    pages_by_hash = _pages_by_hash()
+
+    out = []
+    for r in rows:
+        info = pages_by_hash.get(r["document"])
+        total_pages = info["total_pages"] if info else None
+        out.append({
             **dict(r),
             "title_resolved": aliases.get(r["document"]),
             "percentage_display": round(r["percentage"] * 100, 1),
             "at": datetime.fromtimestamp(r["timestamp"], tz=timezone.utc).isoformat(),
-        }
-        for r in rows
-    ]
+            "total_pages": total_pages,
+            "page": page_at(r["percentage"], total_pages) if total_pages else None,
+            "page_source": info["source"] if info else None,
+        })
+    return out
+
+
+@router.get("/api/reading-stats")
+async def reading_stats():
+    """Aggregate reading stats for the reading-log header.
+
+    Reading volume is reported as PERCENT read — KOReader syncs percentages, not
+    page numbers. Progress within a period = the current position minus the
+    position at the period's start, counted only for books synced in that period.
+    """
+    FINISHED = 0.95  # >= this fraction counts a book as finished
+
+    now = datetime.now()
+    today = now.date()
+    start_today = datetime(today.year, today.month, today.day)
+    ts_today = start_today.timestamp()
+    ts_week = (start_today - timedelta(days=today.weekday())).timestamp()   # Monday
+    ts_month = datetime(today.year, today.month, 1).timestamp()
+    ts_year = datetime(today.year, 1, 1).timestamp()
+
+    with _koreader_conn() as conn:
+        rows = conn.execute(
+            "SELECT document, percentage, timestamp FROM progress_updates"
+        ).fetchall()
+
+    by_doc: dict[str, list[tuple[int, float]]] = {}
+    for r in rows:
+        by_doc.setdefault(r["document"], []).append((r["timestamp"], r["percentage"]))
+
+    pages_by_hash = _pages_by_hash()
+
+    started = finished = in_progress = 0
+    pct_today = pct_week = pct_month = 0.0
+    pages_today = pages_week = pages_month = 0.0
+    active_today: set[str] = set()
+    active_week: set[str] = set()
+    active_month: set[str] = set()
+    active_year: set[str] = set()
+
+    for doc, pts in by_doc.items():
+        max_now = max(pct for _, pct in pts)
+        info = pages_by_hash.get(doc)
+        total_pages = info["total_pages"] if info else 0
+        started += 1
+        if max_now >= FINISHED:
+            finished += 1
+        else:
+            in_progress += 1
+
+        if any(ts >= ts_today for ts, _ in pts):
+            before = [pct for ts, pct in pts if ts < ts_today]
+            delta = max(0.0, max_now - (max(before) if before else 0.0))
+            pct_today += delta
+            pages_today += delta * total_pages
+            active_today.add(doc)
+        if any(ts >= ts_week for ts, _ in pts):
+            before = [pct for ts, pct in pts if ts < ts_week]
+            delta = max(0.0, max_now - (max(before) if before else 0.0))
+            pct_week += delta
+            pages_week += delta * total_pages
+            active_week.add(doc)
+        if any(ts >= ts_month for ts, _ in pts):
+            before = [pct for ts, pct in pts if ts < ts_month]
+            delta = max(0.0, max_now - (max(before) if before else 0.0))
+            pct_month += delta
+            pages_month += delta * total_pages
+            active_month.add(doc)
+        if any(ts >= ts_year for ts, _ in pts):
+            active_year.add(doc)
+
+    return {
+        "books": {"started": started, "in_progress": in_progress, "finished": finished},
+        "read_pct": {
+            "today": round(pct_today * 100, 1),
+            "week": round(pct_week * 100, 1),
+            "month": round(pct_month * 100, 1),
+        },
+        "pages_read": {
+            "today": round(pages_today),
+            "week": round(pages_week),
+            "month": round(pages_month),
+        },
+        "books_read": {
+            "today": len(active_today),
+            "week": len(active_week),
+            "month": len(active_month),
+            "year": len(active_year),
+        },
+    }
 
 
 # ------------------------------------------------------------------ #
@@ -530,7 +741,7 @@ async def search(q: str = "", limit: int = 50, notes_only: bool = False):
             d["match_fields"] = ["user_notes"]
             d["snippet"] = (d.get("user_notes") or "")[:160]
             results.append(d)
-        return results
+        return _dedup_by_image(results)
 
     if not q.strip():
         return []
@@ -594,7 +805,7 @@ async def search(q: str = "", limit: int = 50, notes_only: bool = False):
 
         results.append(d)
 
-    return results
+    return _dedup_by_image(results)
 
 
 @router.get("/api/screenshots/{screenshot_id}/highlights")

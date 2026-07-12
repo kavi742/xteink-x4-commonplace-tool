@@ -4,7 +4,7 @@
 	import type { Screenshot } from '$lib/api';
 
 	let { data } = $props();
-	let { book, screenshots, calendar } = $derived(data);
+	let { book, screenshots, calendar, readingStats } = $derived(data);
 	let filterQ = $state('');
 
 	let grouped = $derived.by(() => {
@@ -34,6 +34,31 @@
 	<span style="font-size:12px;color:var(--text-muted)">{visibleCount} / {screenshots.length}</span>
 </div>
 
+{#if readingStats && readingStats.current_pct > 0}
+	<section class="reading-stats">
+		{#if readingStats.total_pages}
+			<div class="rs-stat">
+				<span class="rs-num">
+					{readingStats.current_page}<span class="rs-sub"> / ~{readingStats.total_pages}</span>
+				</span>
+				<span class="rs-cap">page{readingStats.page_source === 'estimate' ? ' (est.)' : ''}</span>
+			</div>
+		{/if}
+		<div class="rs-stat">
+			<span class="rs-num">{readingStats.current_pct}%</span>
+			<span class="rs-cap">{readingStats.finished ? 'finished' : 'read'}</span>
+		</div>
+		<div class="rs-stat">
+			<span class="rs-num">{readingStats.days_read}</span>
+			<span class="rs-cap">day{readingStats.days_read === 1 ? '' : 's'} read</span>
+		</div>
+		<div class="rs-stat">
+			<span class="rs-num">{readingStats.sessions}</span>
+			<span class="rs-cap">session{readingStats.sessions === 1 ? '' : 's'}</span>
+		</div>
+	</section>
+{/if}
+
 {#if calendar.length > 0}
 	<section style="margin-bottom:1.5rem">
 		<div class="section-label">Reading calendar</div>
@@ -59,3 +84,11 @@
 		<DateGroup {date} screenshots={shots} siblings={allIds} />
 	{/each}
 {/if}
+
+<style>
+	.reading-stats { display: flex; flex-wrap: wrap; gap: 1.75rem; margin-bottom: 1.5rem; padding: 1rem 1.1rem; background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; }
+	.rs-stat { display: flex; flex-direction: column; }
+	.rs-num { font-size: 22px; font-weight: 700; color: var(--text); line-height: 1.15; }
+	.rs-sub { font-size: 14px; font-weight: 500; color: var(--text-muted); }
+	.rs-cap { font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .05em; }
+</style>

@@ -61,7 +61,7 @@ class ScreenshotArchiver:
                         content_hash = hashlib.sha256(content).hexdigest()
                         if self._state.is_synced(filepath, content_hash):
                             continue
-                        # Stream bytes through the status WebSocket — fills progress bar accurately
+                        # Log per-page progress server-side (see status_display).
                         await show(self._status_label(book, filepath, gi, total), data=content)
                         pages.append((idx, filepath, content, content_hash))
 

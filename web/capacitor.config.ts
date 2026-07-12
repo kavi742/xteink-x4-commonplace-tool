@@ -7,7 +7,10 @@ const config: CapacitorConfig = {
   server: {
     // The APK loads the live web UI from the homelab. The phone resolves
     // `ghostbird` via Tailscale MagicDNS. Swap for a real domain name later.
-    url: 'http://ghostbird:8090/app',
+    // Must be the site ROOT (no `/app`): the UI is served at `/`, and `/app`
+    // only 307-redirects there. Pointing Capacitor at `/app` scopes the WebView
+    // to that path, so in-app navigation to root routes (/log, /tbr, …) breaks.
+    url: 'http://ghostbird:8090',
     cleartext: true,
   },
 };

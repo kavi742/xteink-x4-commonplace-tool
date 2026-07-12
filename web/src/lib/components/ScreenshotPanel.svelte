@@ -97,8 +97,8 @@
 						{#each parseBboxes(h.bbox_json) as box}
 							<rect
 								x={box.x} y={box.y} width={box.w} height={box.h}
-								fill="rgba(255,235,59,0.35)"
-								stroke="rgba(220,160,0,0.8)"
+								fill="rgba(238,212,159,0.30)"
+								stroke="rgba(238,212,159,0.9)"
 								stroke-width="1.5"
 								rx="2"
 							/>
@@ -185,10 +185,8 @@
 
 <style>
 	mark {
-		background: #fff176;
+		background: #eed49f;
+		color: #24273a;
 		border-radius: 2px;
-	}
-	@media (prefers-color-scheme: dark) {
-		mark { background: #6b5900; color: #fff; }
 	}
 </style>

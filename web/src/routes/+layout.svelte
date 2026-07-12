@@ -9,6 +9,7 @@
 	import ScreenshotPanel from '$lib/components/ScreenshotPanel.svelte';
 	import StatusWidget from '$lib/components/StatusWidget.svelte';
 	import FontSizeControl from '$lib/components/FontSizeControl.svelte';
+	import RelayBar from '$lib/components/RelayBar.svelte';
 
 	let { children, data } = $props();
 	let { books } = $derived(data);
@@ -116,6 +117,7 @@
 	</aside>
 
 	<main class="main">
+		<RelayBar />
 		{@render children()}
 	</main>
 </div>

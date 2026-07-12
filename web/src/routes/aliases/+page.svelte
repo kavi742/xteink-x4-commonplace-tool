@@ -37,7 +37,7 @@
 
 {#if unresolved.length > 0}
 	<div style="background:var(--bg-sidebar);border:1px solid var(--border);border-radius:var(--radius);padding:.75rem;margin-bottom:1.5rem">
-		<p class="section-label" style="margin-bottom:.5rem;color:#b45309">⚠ Unresolved ({unresolved.length})</p>
+		<p class="section-label" style="margin-bottom:.5rem;color:#f5a97f">⚠ Unresolved ({unresolved.length})</p>
 		<p style="font-size:12px;color:var(--text-muted);margin-bottom:.75rem">
 			These hashes appear in your reading log but have no title mapping.
 			Put the X4 in File Transfer mode and run <code style="font-size:11px">sync_once</code> to auto-resolve,

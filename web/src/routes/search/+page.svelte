@@ -143,11 +143,9 @@
 		overflow: hidden;
 	}
 	:global(.search-snippet mark) {
-		background: #fff176;
+		background: #eed49f;
+		color: #24273a;
 		border-radius: 2px;
-	}
-	@media (prefers-color-scheme: dark) {
-		:global(.search-snippet mark) { background: #6b5900; color: #fff; }
 	}
 	.search-fields { display: flex; gap: .3rem; flex-wrap: wrap; }
 	.search-tag {

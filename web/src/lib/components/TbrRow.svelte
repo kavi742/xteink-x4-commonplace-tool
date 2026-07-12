@@ -53,7 +53,7 @@
 	}
 	.status-icon { display: block; }
 	.status-queued  { color: var(--text-muted); }
-	.status-reading { color: #3b82f6; }
+	.status-reading { color: #8aadf4; }
 	.status-done    { color: var(--text-muted); opacity: .5; }
 	.tbr-body { flex: 1; min-width: 0; }
 	.tbr-title { font-size: 13px; font-weight: 600; line-height: 1.4; }

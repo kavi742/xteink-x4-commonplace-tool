@@ -92,12 +92,10 @@
 		font-family: var(--font-serif);
 		font-size: 13px;
 		line-height: 1.5;
-		background: #fff176;
+		background: #eed49f;
+		color: #24273a;
 		padding: .15rem .3rem;
 		border-radius: 2px;
-	}
-	@media (prefers-color-scheme: dark) {
-		.highlight-text { background: #6b5900; color: #fff; }
 	}
 	.highlight-meta { font-size: 11px; color: var(--text-muted); margin-top: .3rem; }
 	.highlight-del {

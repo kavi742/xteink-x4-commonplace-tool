@@ -29,13 +29,13 @@ public class MainActivity extends BridgeActivity {
     }
 
     @Override
-    protected void onResume() {
+    public void onResume() {
         super.onResume();
         startRelay();
     }
 
     @Override
-    protected void onPause() {
+    public void onPause() {
         stopRelay();
         super.onPause();
     }

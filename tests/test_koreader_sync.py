@@ -1,3 +1,4 @@
+import hashlib
 import os
 import tempfile
 
@@ -10,6 +11,7 @@ _tmpdb = tempfile.mktemp(suffix=".db")
 os.environ["KOREADER_DB"] = _tmpdb
 
 from xteink_service.koreader_sync import app, _store
+import xteink_service.koreader_sync as ks
 
 client = TestClient(app)
 
@@ -71,3 +73,38 @@ def test_list_progress_returns_all():
     r = client.get("/syncs/progress")
     assert r.status_code == 200
     assert isinstance(r.json(), list)
+
+
+def test_kosync_auth_off_by_default():
+    # No KOSYNC_USER/PASSWORD configured at import -> endpoints stay open.
+    assert ks._KOSYNC_REQUIRED is False
+    assert client.get("/users/auth").status_code == 200
+
+
+def test_kosync_auth_rejects_missing_and_wrong_credentials(monkeypatch):
+    key = hashlib.md5(b"s3cret").hexdigest()
+    monkeypatch.setattr(ks, "_KOSYNC_USER", "reader")
+    monkeypatch.setattr(ks, "_KOSYNC_KEY", key)
+    monkeypatch.setattr(ks, "_KOSYNC_REQUIRED", True)
+
+    assert client.get("/users/auth").status_code == 401  # no headers
+    assert client.get("/users/auth", headers={
+        "x-auth-user": "nope", "x-auth-key": key}).status_code == 401  # wrong user
+    assert client.get("/users/auth", headers={
+        "x-auth-user": "reader", "x-auth-key": "deadbeef"}).status_code == 401  # wrong key
+    assert client.post("/syncs/progress", json={  # protects progress too
+        "document": "x.epub", "progress": "0", "percentage": 1.0}).status_code == 401
+
+
+def test_kosync_auth_accepts_valid_credentials(monkeypatch):
+    key = hashlib.md5(b"s3cret").hexdigest()
+    monkeypatch.setattr(ks, "_KOSYNC_USER", "reader")
+    monkeypatch.setattr(ks, "_KOSYNC_KEY", key)
+    monkeypatch.setattr(ks, "_KOSYNC_REQUIRED", True)
+    hdr = {"x-auth-user": "reader", "x-auth-key": key.upper()}  # key compared case-insensitively
+
+    assert client.get("/users/auth", headers=hdr).status_code == 200
+    r = client.post("/syncs/progress", headers=hdr, json={
+        "document": "auth.epub", "progress": "0/Ch1", "percentage": 12.0})
+    assert r.status_code == 200
+    assert r.json()["document"] == "auth.epub"

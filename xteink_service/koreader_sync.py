@@ -17,6 +17,7 @@ Leave them unset to disable auth (e.g. when Tailscale is the only gate).
 """
 import asyncio
 import logging
+import hashlib
 import os
 import secrets
 import sqlite3
@@ -25,8 +26,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated, Optional
 
-from fastapi import Depends, FastAPI, HTTPException, status
-from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from fastapi import Depends, FastAPI, Header, HTTPException, status
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -45,30 +45,46 @@ app.include_router(api_router)
 import pathlib as _pathlib
 _web_build = _pathlib.Path(__file__).parent.parent / "web" / "build"
 
-_basic = HTTPBasic(auto_error=False)
+# ------------------------------------------------------------------ #
+# KOReader kosync auth                                                 #
+# ------------------------------------------------------------------ #
+# KOReader's progress-sync client authenticates with the kosync scheme: it sends
+# `x-auth-user` and `x-auth-key` headers, where the key is md5(password). It does
+# NOT do HTTP Basic Auth — putting Basic Auth in front (here or at NPM) breaks
+# sync with 401. When KOSYNC_USER + KOSYNC_PASSWORD are set, every kosync
+# endpoint requires a matching user + key; unset, the endpoints stay open (the
+# LAN-only default). Set these when exposing the server publicly (e.g. DuckDNS).
+_KOSYNC_USER = os.getenv("KOSYNC_USER", "")
+_KOSYNC_PASS = os.getenv("KOSYNC_PASSWORD", "")
+# A pre-hashed key (KOSYNC_MD5) may be supplied instead of the plaintext password.
+_KOSYNC_KEY = (
+    os.getenv("KOSYNC_MD5", "")
+    or (hashlib.md5(_KOSYNC_PASS.encode()).hexdigest() if _KOSYNC_PASS else "")
+).lower()
+_KOSYNC_REQUIRED = bool(_KOSYNC_USER and _KOSYNC_KEY)
 
-_SYNC_USER = os.getenv("SYNC_USER", "")
-_SYNC_PASS = os.getenv("SYNC_PASSWORD", "")
-_AUTH_REQUIRED = bool(_SYNC_USER and _SYNC_PASS)
 
+def _require_kosync_auth(
+    x_auth_user: Annotated[str | None, Header()] = None,
+    x_auth_key: Annotated[str | None, Header()] = None,
+) -> None:
+    """Validate KOReader's x-auth-user / x-auth-key (md5 of the password) headers.
 
-def _require_auth(creds: Annotated[HTTPBasicCredentials | None, Depends(_basic)]) -> None:
-    """Validate Basic Auth when SYNC_USER/SYNC_PASSWORD are configured."""
-    if not _AUTH_REQUIRED:
+    No-op unless KOSYNC_USER + KOSYNC_PASSWORD (or KOSYNC_MD5) are configured.
+    """
+    if not _KOSYNC_REQUIRED:
         return
-    if creds is None:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED,
-                            headers={"WWW-Authenticate": "Basic"})
+    if not x_auth_user or not x_auth_key:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Missing kosync credentials")
     ok = (
-        secrets.compare_digest(creds.username.encode(), _SYNC_USER.encode())
-        and secrets.compare_digest(creds.password.encode(), _SYNC_PASS.encode())
+        secrets.compare_digest(x_auth_user, _KOSYNC_USER)
+        and secrets.compare_digest(x_auth_key.lower(), _KOSYNC_KEY)
     )
     if not ok:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED,
-                            headers={"WWW-Authenticate": "Basic"})
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Invalid kosync credentials")
 
 
-Auth = Annotated[None, Depends(_require_auth)]
+KosyncAuth = Annotated[None, Depends(_require_kosync_auth)]
 
 
 # ------------------------------------------------------------------ #
@@ -212,7 +228,7 @@ async def health():
 
 @app.post("/users/create")
 @app.get("/users/auth")
-async def auth_stub(_: Auth):
+async def auth_stub(_: KosyncAuth):
     return {"authorized": "OK"}
 
 
@@ -222,7 +238,7 @@ async def auth_stub(_: Auth):
 
 @app.post("/syncs/progress")
 @app.put("/syncs/progress")
-async def put_progress(update: ProgressIn, _: Auth):
+async def put_progress(update: ProgressIn, _: KosyncAuth):
     """Receive a reading position from KOReader and store it."""
     # De-dupe: KOReader re-syncs the same position periodically. If nothing has
     # moved since the last sync for this document, don't log another identical
@@ -300,7 +316,7 @@ async def _write_progress_to_vault(update: ProgressIn) -> None:
 
 
 @app.get("/syncs/progress/{document:path}")
-async def get_progress(document: str, _: Auth):
+async def get_progress(document: str, _: KosyncAuth):
     """Return the last known position for a document."""
     record = _store._latest(document)
     if record is None:
@@ -309,7 +325,7 @@ async def get_progress(document: str, _: Auth):
 
 
 @app.get("/syncs/progress")
-async def list_progress(_: Auth):
+async def list_progress(_: KosyncAuth):
     """List recent progress updates (admin / debug)."""
     return _store.all()
 

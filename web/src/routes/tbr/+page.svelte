@@ -43,6 +43,11 @@
 		await api.tbr.delete(id);
 		books = books.filter(b => b.id !== id);
 	}
+
+	async function save(book: TbrBook, fields: { title: string; author: string; notes: string; source_url: string }) {
+		await api.tbr.update(book.id, fields);
+		books = books.map(b => b.id === book.id ? { ...b, ...fields } : b);
+	}
 </script>
 
 <svelte:head><title>TBR — xteink</title></svelte:head>
@@ -72,7 +77,7 @@
 {#if reading.length > 0}
 	<p class="section-label">Currently reading</p>
 	{#each reading as book (book.id)}
-		<TbrRow {book} oncycle={() => cycle(book)} onremove={() => remove(book.id)} />
+		<TbrRow {book} oncycle={() => cycle(book)} onremove={() => remove(book.id)} onsave={(fields) => save(book, fields)} />
 	{/each}
 {/if}
 
@@ -80,7 +85,7 @@
 	{#if reading.length > 0}<div style="height:.75rem"></div>{/if}
 	<p class="section-label">Up next</p>
 	{#each queued as book (book.id)}
-		<TbrRow {book} oncycle={() => cycle(book)} onremove={() => remove(book.id)} />
+		<TbrRow {book} oncycle={() => cycle(book)} onremove={() => remove(book.id)} onsave={(fields) => save(book, fields)} />
 	{/each}
 {/if}
 
@@ -99,7 +104,7 @@
 	{#if showDone}
 		<div style="margin-top:.25rem">
 			{#each done as book (book.id)}
-				<TbrRow {book} oncycle={() => cycle(book)} onremove={() => remove(book.id)} />
+				<TbrRow {book} oncycle={() => cycle(book)} onremove={() => remove(book.id)} onsave={(fields) => save(book, fields)} />
 			{/each}
 		</div>
 	{/if}

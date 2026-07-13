@@ -108,3 +108,14 @@ def test_kosync_auth_accepts_valid_credentials(monkeypatch):
         "document": "auth.epub", "progress": "0/Ch1", "percentage": 12.0})
     assert r.status_code == 200
     assert r.json()["document"] == "auth.epub"
+
+
+def test_public_sync_host_blocks_ui_and_api(monkeypatch):
+    monkeypatch.setattr(ks, "_PUBLIC_SYNC_HOST", "sync.example.org")
+    pub = {"host": "sync.example.org"}
+    # On the public sync host, only the kosync endpoints are reachable.
+    assert client.get("/status", headers=pub).status_code == 404
+    assert client.get("/api/books", headers=pub).status_code == 404
+    assert client.get("/users/auth", headers=pub).status_code == 200
+    # From any other Host (LAN / Tailscale), the UI + API are unaffected.
+    assert client.get("/status", headers={"host": "ghostbird:8090"}).status_code == 200

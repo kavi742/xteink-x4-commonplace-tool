@@ -37,6 +37,33 @@ app = FastAPI(title="xteink-service", version="1.0.0")
 from xteink_service.api import router as api_router  # noqa: E402
 app.include_router(api_router)
 
+
+# ------------------------------------------------------------------ #
+# Public exposure guard                                                #
+# ------------------------------------------------------------------ #
+# When PUBLIC_SYNC_HOST is set (the DuckDNS domain that fronts KOReader sync via
+# NPM), requests arriving on that hostname may ONLY reach the kosync endpoints —
+# the web UI and CRUD API stay private (LAN / Tailscale). Requests on any other
+# Host (localhost, ghostbird, the Tailscale IP, …) are unaffected, so the full UI
+# still works at home. This is what keeps the UI off the public internet while
+# only the (x-auth-protected) sync endpoints are exposed.
+_PUBLIC_SYNC_HOST = os.getenv("PUBLIC_SYNC_HOST", "").split(":")[0].lower()
+_PUBLIC_ALLOWED = ("/syncs", "/users", "/health")
+
+
+@app.middleware("http")
+async def _restrict_public_sync_host(request, call_next):
+    if _PUBLIC_SYNC_HOST:
+        host = (
+            request.headers.get("x-forwarded-host")
+            or request.headers.get("host", "")
+        ).split(":")[0].lower()
+        if host == _PUBLIC_SYNC_HOST and not request.url.path.startswith(_PUBLIC_ALLOWED):
+            from fastapi.responses import JSONResponse
+            return JSONResponse({"detail": "Not Found"}, status_code=404)
+    return await call_next(request)
+
+
 # The built SvelteKit web UI is served from the site root (/) at the bottom of
 # this module (see the SPA fallback). The app is built with an empty base path
 # — assets are referenced from /_app and links are root-absolute (/books, …) —

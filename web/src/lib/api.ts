@@ -51,7 +51,7 @@ export interface ReadingStats {
 	books: { started: number; in_progress: number; finished: number };
 	read_pct: { today: number; week: number; month: number };
 	pages_read: { today: number; week: number; month: number };
-	books_read: { today: number; week: number; month: number; year: number };
+	books_read: { today: number; week: number; month: number; year: number; all_time: number };
 }
 
 export interface BookReadingStats {

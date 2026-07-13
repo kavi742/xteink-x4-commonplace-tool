@@ -544,6 +544,7 @@ async def reading_stats():
             "week": len(done_week),
             "month": len(done_month),
             "year": len(done_year),
+            "all_time": finished,
         },
     }
 

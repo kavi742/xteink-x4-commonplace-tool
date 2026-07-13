@@ -104,7 +104,7 @@
 {/if}
 
 <style>
-	.stats { display: flex; flex-wrap: wrap; gap: 1.75rem; margin-bottom: 1.5rem; padding-bottom: 1.25rem; border-bottom: 1px solid var(--border); }
+	.stats { display: flex; flex-wrap: wrap; gap: 1.25rem 2rem; margin-bottom: 1.5rem; padding: 1rem 1.25rem; background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; }
 	.stats-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: var(--text-muted); margin-bottom: .4rem; }
 	.stats-row { display: flex; gap: 1.1rem; }
 	.stat { display: flex; flex-direction: column; }

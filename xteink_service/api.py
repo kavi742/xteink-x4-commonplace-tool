@@ -485,10 +485,10 @@ async def reading_stats():
     started = finished = in_progress = 0
     pct_today = pct_week = pct_month = 0.0
     pages_today = pages_week = pages_month = 0.0
-    active_today: set[str] = set()
-    active_week: set[str] = set()
-    active_month: set[str] = set()
-    active_year: set[str] = set()
+    done_today: set[str] = set()
+    done_week: set[str] = set()
+    done_month: set[str] = set()
+    done_year: set[str] = set()
 
     for doc, pts in by_doc.items():
         max_now = max(pct for _, pct in pts)
@@ -497,6 +497,17 @@ async def reading_stats():
         started += 1
         if max_now >= FINISHED:
             finished += 1
+            # "Books read" = books COMPLETED within the period: the first sync
+            # that reached the finished threshold.
+            completed_at = min(ts for ts, pct in pts if pct >= FINISHED)
+            if completed_at >= ts_today:
+                done_today.add(doc)
+            if completed_at >= ts_week:
+                done_week.add(doc)
+            if completed_at >= ts_month:
+                done_month.add(doc)
+            if completed_at >= ts_year:
+                done_year.add(doc)
         else:
             in_progress += 1
 
@@ -505,21 +516,16 @@ async def reading_stats():
             delta = max(0.0, max_now - (max(before) if before else 0.0))
             pct_today += delta
             pages_today += delta * total_pages
-            active_today.add(doc)
         if any(ts >= ts_week for ts, _ in pts):
             before = [pct for ts, pct in pts if ts < ts_week]
             delta = max(0.0, max_now - (max(before) if before else 0.0))
             pct_week += delta
             pages_week += delta * total_pages
-            active_week.add(doc)
         if any(ts >= ts_month for ts, _ in pts):
             before = [pct for ts, pct in pts if ts < ts_month]
             delta = max(0.0, max_now - (max(before) if before else 0.0))
             pct_month += delta
             pages_month += delta * total_pages
-            active_month.add(doc)
-        if any(ts >= ts_year for ts, _ in pts):
-            active_year.add(doc)
 
     return {
         "books": {"started": started, "in_progress": in_progress, "finished": finished},
@@ -534,10 +540,10 @@ async def reading_stats():
             "month": round(pages_month),
         },
         "books_read": {
-            "today": len(active_today),
-            "week": len(active_week),
-            "month": len(active_month),
-            "year": len(active_year),
+            "today": len(done_today),
+            "week": len(done_week),
+            "month": len(done_month),
+            "year": len(done_year),
         },
     }
 

@@ -44,12 +44,12 @@ services:
       # server publicly via NPM/DuckDNS. On the X4: KOReader > Progress sync,
       # use the same username + password. NOT HTTP Basic Auth — do not add an
       # NPM Access List to the sync host, it would 401 the X4.
-      # - KOSYNC_USER=xteink
-      # - KOSYNC_PASSWORD=628080
+      - KOSYNC_USER=xteink
+      - KOSYNC_PASSWORD=${KOSYNC_PASSWORD}
       # Exposing ONLY the sync publicly (NPM/DuckDNS): set this to that public
       # hostname so the web UI + /api are refused on it (kept LAN/Tailscale only),
       # while the kosync endpoints stay reachable there.
-      # - PUBLIC_SYNC_HOST=sync.ghostbird.duckdns.org
+      - PUBLIC_SYNC_HOST=read.ghostbird.duckdns.org
     # Fallback if in-container mDNS ever fails — pin the device IP here:
     # extra_hosts:
     #   - "crosspoint.local:192.168.x.x"

@@ -36,14 +36,6 @@
 
 {#if stats}
 	<div class="stats">
-		<div class="stats-group">
-			<div class="stats-label">Read</div>
-			<div class="stats-row">
-				<div class="stat"><span class="stat-num">{stats.read_pct.today}%</span><span class="stat-cap">today</span></div>
-				<div class="stat"><span class="stat-num">{stats.read_pct.week}%</span><span class="stat-cap">week</span></div>
-				<div class="stat"><span class="stat-num">{stats.read_pct.month}%</span><span class="stat-cap">month</span></div>
-			</div>
-		</div>
 		{#if stats.pages_read}
 			<div class="stats-group">
 				<div class="stats-label">Pages read</div>
@@ -51,6 +43,15 @@
 					<div class="stat"><span class="stat-num">{stats.pages_read.today}</span><span class="stat-cap">today</span></div>
 					<div class="stat"><span class="stat-num">{stats.pages_read.week}</span><span class="stat-cap">week</span></div>
 					<div class="stat"><span class="stat-num">{stats.pages_read.month}</span><span class="stat-cap">month</span></div>
+				</div>
+			</div>
+		{:else}
+			<div class="stats-group">
+				<div class="stats-label">Read</div>
+				<div class="stats-row">
+					<div class="stat"><span class="stat-num">{stats.read_pct.today}%</span><span class="stat-cap">today</span></div>
+					<div class="stat"><span class="stat-num">{stats.read_pct.week}%</span><span class="stat-cap">week</span></div>
+					<div class="stat"><span class="stat-num">{stats.read_pct.month}%</span><span class="stat-cap">month</span></div>
 				</div>
 			</div>
 		{/if}
@@ -91,8 +92,7 @@
 						{/if}
 					</div>
 					<div class="log-entry-detail">
-						{entry.percentage_display}%
-						{#if entry.page} · p{entry.page}{#if entry.total_pages} / ~{entry.total_pages}{/if}{/if}
+						{#if entry.page}p{entry.page}{#if entry.total_pages} / ~{entry.total_pages}{/if}{:else}{entry.percentage_display}%{/if}
 						{#if cfi(entry.progress)} · {cfi(entry.progress)}{/if}
 						· {new Date(entry.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
 					</div>

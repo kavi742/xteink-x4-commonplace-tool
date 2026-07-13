@@ -263,6 +263,25 @@ async def auth_stub(_: KosyncAuth):
 # Progress sync                                                        #
 # ------------------------------------------------------------------ #
 
+def _kosync_view(rec: dict | None) -> dict:
+    """Project a stored record to the standard kosync response fields only.
+
+    KOReader / CrossPoint's sync client expects the kosync schema; our extra
+    columns (id, title, author) can trip its JSON parser, so strip them.
+    Returns {} for a missing record.
+    """
+    if not rec:
+        return {}
+    return {
+        "document": rec.get("document", ""),
+        "progress": rec.get("progress", ""),
+        "percentage": rec.get("percentage", 0.0),
+        "device": rec.get("device", ""),
+        "device_id": rec.get("device_id", ""),
+        "timestamp": rec.get("timestamp"),
+    }
+
+
 @app.post("/syncs/progress")
 @app.put("/syncs/progress")
 async def put_progress(update: ProgressIn, _: KosyncAuth):
@@ -273,7 +292,7 @@ async def put_progress(update: ProgressIn, _: KosyncAuth):
     last = _store._latest(update.document)
     if last and last.get("progress") == update.progress \
             and last.get("percentage") == update.percentage:
-        return last
+        return _kosync_view(last)
 
     record = _store.upsert(
         document=update.document,
@@ -285,7 +304,7 @@ async def put_progress(update: ProgressIn, _: KosyncAuth):
         author=update.author or "",
     )
     await _write_progress_to_vault(update)
-    return record
+    return _kosync_view(record)
 
 
 async def _write_progress_to_vault(update: ProgressIn) -> None:
@@ -344,11 +363,8 @@ async def _write_progress_to_vault(update: ProgressIn) -> None:
 
 @app.get("/syncs/progress/{document:path}")
 async def get_progress(document: str, _: KosyncAuth):
-    """Return the last known position for a document."""
-    record = _store._latest(document)
-    if record is None:
-        return {}
-    return record
+    """Return the last known position for a document (kosync fields only)."""
+    return _kosync_view(_store._latest(document))
 
 
 @app.get("/syncs/progress")

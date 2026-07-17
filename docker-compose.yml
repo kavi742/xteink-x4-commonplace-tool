@@ -50,8 +50,8 @@ services:
       # hostname so the web UI + /api are refused on it (kept LAN/Tailscale only),
       # while the kosync endpoints stay reachable there.
       - PUBLIC_SYNC_HOST=read.ghostbird.duckdns.org
-      # The human web UI is exposed separately at app.ghostbird.duckdns.org via a
-      # SECOND NPM proxy host (also -> xteink:8090) guarded by an NPM Access List
+      # The human web UI is exposed separately at xteink.ghostbird.duckdns.org via
+      # a SECOND NPM proxy host (also -> xteink:8090) guarded by an NPM Access List
       # (HTTP Basic Auth). That host is NOT PUBLIC_SYNC_HOST, so the full UI/API
       # serve there. Keep the Basic Auth Access List OFF read.* (it would 401 the
       # X4's kosync). The Android app embeds those Basic Auth creds in its URL

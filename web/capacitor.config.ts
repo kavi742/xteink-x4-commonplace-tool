@@ -10,7 +10,7 @@ import type { CapacitorConfig } from '@capacitor/cli';
 //
 //   APP_BASIC_AUTH='user:pass' npx cap sync android
 //
-// Use a DEDICATED UI subdomain (app.*) — NOT the kosync host (read.*), which is
+// Use a DEDICATED UI host (xteink.*) — NOT the kosync host (read.*), which is
 // x-auth only and would 401 the X4 under a Basic Auth Access List.
 const auth = process.env.APP_BASIC_AUTH ? `${process.env.APP_BASIC_AUTH}@` : '';
 
@@ -22,7 +22,7 @@ const config: CapacitorConfig = {
     // Site ROOT over HTTPS (no `/app`: the UI is served at `/`, and `/app` only
     // 307-redirects there — scoping the WebView to `/app` breaks in-app
     // navigation to /log, /tbr, …).
-    url: `https://${auth}app.ghostbird.duckdns.org`,
+    url: `https://${auth}xteink.ghostbird.duckdns.org`,
   },
 };
 

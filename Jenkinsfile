@@ -50,7 +50,21 @@ pipeline {
         stage('Capacitor sync') {
             steps {
                 dir('web') {
-                    sh 'npx cap sync android'
+                    // Bake the NPM Basic Auth creds into the APK's server URL so the
+                    // WebView passes the Access List on xteink.ghostbird.duckdns.org.
+                    // APP_BASIC_AUTH ('user:pass') is read from an env file kept on the
+                    // Jenkins agent ($JENKINS_HOME/app-basic-auth.env, off git — NOT in
+                    // this repo, since the SCM checkout would not contain it) and is
+                    // injected into the URL by capacitor.config.ts at sync time.
+                    sh '''
+                        ENV_FILE="${JENKINS_HOME:-/var/jenkins_home}/app-basic-auth.env"
+                        if [ -f "$ENV_FILE" ]; then
+                            set -a; . "$ENV_FILE"; set +a
+                        else
+                            echo "WARNING: $ENV_FILE not found — APK will have NO Basic Auth creds and will 401 against the NPM Access List."
+                        fi
+                        npx cap sync android
+                    '''
                 }
             }
         }

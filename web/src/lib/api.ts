@@ -35,6 +35,7 @@ export interface ProgressEntry {
 	total_pages: number | null;
 	page: number | null;
 	page_source: string | null;
+	finishes_book?: boolean;
 }
 
 export interface ReadingCalendarDay {

@@ -85,6 +85,7 @@
 			{#each group.items as entry}
 				<div class="log-entry">
 					<div class="log-entry-title">
+						{#if entry.finishes_book}<span class="finish-star" title="Finished the book">★</span>{/if}
 						{#if entry.title_resolved}
 							<a href="/books/{encodeURIComponent(entry.title_resolved)}">{entry.title_resolved}</a>
 						{:else}
@@ -110,4 +111,5 @@
 	.stat { display: flex; flex-direction: column; }
 	.stat-num { font-size: 20px; font-weight: 700; color: var(--text); line-height: 1.15; }
 	.stat-cap { font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .05em; }
+	.finish-star { color: #e5b567; margin-right: .3rem; }
 </style>

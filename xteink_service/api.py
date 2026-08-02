@@ -22,9 +22,11 @@ import sqlite3
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
+
+from xteink_service import logbuffer
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -421,10 +423,21 @@ async def update_screenshot(screenshot_id: int, body: ScreenshotUpdate):
 @router.get("/api/reading-log")
 async def reading_log(limit: int = 100):
     """Recent KOReader progress updates with resolved titles."""
+    FINISHED = 0.95  # matches reading_stats: the first crossing finishes the book
     with _koreader_conn() as conn:
         rows = conn.execute(
             "SELECT * FROM progress_updates ORDER BY id DESC LIMIT ?", (limit,)
         ).fetchall()
+        # The entry that finished each book = the earliest update that reached
+        # the finished threshold (min id, since ids are insertion-ordered).
+        finishing = {
+            r["document"]: r["fid"]
+            for r in conn.execute(
+                "SELECT document, MIN(id) AS fid FROM progress_updates "
+                "WHERE percentage >= ? GROUP BY document",
+                (FINISHED,),
+            )
+        }
 
     aliases: dict[str, str] = {}
     try:
@@ -449,6 +462,7 @@ async def reading_log(limit: int = 100):
             "total_pages": total_pages,
             "page": page_at(r["percentage"], total_pages) if total_pages else None,
             "page_source": info["source"] if info else None,
+            "finishes_book": r["id"] == finishing.get(r["document"]),
         })
     return out
 
@@ -1026,3 +1040,205 @@ async def delete_tbr(tbr_id: int):
         if cur.rowcount == 0:
             raise HTTPException(status_code=404, detail="TBR book not found")
     return {"deleted": tbr_id}
+
+
+# ------------------------------------------------------------------ #
+# Live log viewer (/logs) + device probe                              #
+# ------------------------------------------------------------------ #
+# A self-contained diagnostic page that streams recent service logs to the
+# browser so you can watch what happens when the X4 enters File Transfer mode:
+# device detection -> screenshot archiving -> title/hash resolution -> page
+# lookup. Served directly by FastAPI (no SvelteKit build step), and — like the
+# rest of the CRUD API — refused on PUBLIC_SYNC_HOST by the koreader_sync
+# middleware, so it only reaches the Basic-Auth-protected human host
+# (xteink.ghostbird.duckdns.org), never the public kosync host.
+
+import time as _time
+
+_device_cache: dict = {"at": 0.0, "online": None}
+
+
+async def _probe_device(timeout: float = 2.0, cache_s: float = 3.0):
+    """Best-effort check whether the X4 is reachable (i.e. in File Transfer
+    mode). Cached briefly so multiple tabs/pollers don't hammer the device."""
+    now = _time.monotonic()
+    if now - _device_cache["at"] < cache_s and _device_cache["online"] is not None:
+        return _device_cache["online"]
+    host = os.getenv("DEVICE_HOST", "crosspoint.local")
+    online = False
+    try:
+        import aiohttp
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f"http://{host}/api/status",
+                timeout=aiohttp.ClientTimeout(total=timeout),
+            ) as resp:
+                online = resp.status == 200
+    except Exception:
+        online = False
+    _device_cache["at"] = now
+    _device_cache["online"] = online
+    return online
+
+
+@router.get("/api/logs")
+async def api_logs(
+    after: int = 0,
+    level: str | None = None,
+    contains: str | None = Query(default=None, max_length=200),
+):
+    """Recent in-memory log records with ``id > after`` (incremental polling)."""
+    handler = logbuffer.get_handler() or logbuffer.install()
+    return handler.get(after=after, level=level, contains=contains)
+
+
+@router.get("/api/device")
+async def api_device():
+    """Whether the X4 is currently reachable (i.e. in File Transfer mode)."""
+    return {
+        "host": os.getenv("DEVICE_HOST", "crosspoint.local"),
+        "online": await _probe_device(),
+    }
+
+
+@router.get("/logs")
+async def logs_page() -> HTMLResponse:
+    """Self-contained live log viewer (see _LOGS_PAGE)."""
+    logbuffer.get_handler() or logbuffer.install()
+    return HTMLResponse(_LOGS_PAGE)
+
+
+_LOGS_PAGE = r"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>xteink · logs</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body { background:#0c0f14; color:#cdd6e4; display:flex; flex-direction:column;
+         font:13px/1.55 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+  header { position:sticky; top:0; z-index:2; display:flex; flex-wrap:wrap; gap:.5rem;
+           align-items:center; padding:.55rem .75rem; background:#111722; border-bottom:1px solid #222c3a; }
+  header h1 { font-size:14px; margin:0 .4rem 0 0; font-weight:600; color:#e8edf5; }
+  header h1 .sub { color:#6b7686; font-weight:400; }
+  .badge { display:inline-flex; align-items:center; gap:.4rem; padding:.2rem .55rem;
+           border-radius:999px; font-size:12px; background:#1b2432; border:1px solid #2a3547; }
+  .dot { width:.6rem; height:.6rem; border-radius:50%; background:#556; }
+  .badge.online .dot { background:#3ddc84; box-shadow:0 0 8px #3ddc84; }
+  .spacer { flex:1 1 auto; }
+  select, input[type=text], button { background:#0f1520; color:#cdd6e4; border:1px solid #2a3547;
+           border-radius:6px; padding:.3rem .5rem; font:inherit; }
+  input[type=text] { min-width:11rem; }
+  button { cursor:pointer; }
+  button:hover { border-color:#3a4a63; background:#141c29; }
+  label.chk { display:inline-flex; align-items:center; gap:.35rem; color:#9aa6b8; user-select:none; }
+  main { flex:1 1 auto; overflow:auto; padding:.4rem .2rem 2rem; }
+  .row { display:grid; grid-template-columns:auto 4.5rem auto 1fr; gap:.6rem;
+         padding:.03rem .75rem; white-space:pre-wrap; word-break:break-word; }
+  .row:hover { background:#0f151f; }
+  .t { color:#5f6b7e; }
+  .lvl { font-weight:600; }
+  .src { color:#7aa2f7; }
+  .row.INFO .lvl { color:#8b98ad; }
+  .row.DEBUG { color:#6b7686; }
+  .row.DEBUG .lvl { color:#556; }
+  .row.WARNING .lvl, .row.WARNING .msg { color:#e5b567; }
+  .row.ERROR .lvl, .row.ERROR .msg,
+  .row.CRITICAL .lvl, .row.CRITICAL .msg { color:#ff6b6b; }
+  .empty { color:#5f6b7e; padding:1rem .75rem; }
+</style>
+</head>
+<body>
+<header>
+  <h1>xteink <span class="sub">· logs</span></h1>
+  <span id="dev" class="badge"><span class="dot"></span><span id="devtxt">device …</span></span>
+  <span class="spacer"></span>
+  <select id="level" title="Minimum level">
+    <option value="">All</option>
+    <option value="DEBUG">Debug+</option>
+    <option value="INFO" selected>Info+</option>
+    <option value="WARNING">Warn+</option>
+    <option value="ERROR">Error+</option>
+  </select>
+  <input id="filter" type="text" placeholder="filter text…" autocomplete="off">
+  <label class="chk"><input id="follow" type="checkbox" checked> follow</label>
+  <button id="pause">Pause</button>
+  <button id="clear">Clear</button>
+  <button id="save">Save</button>
+</header>
+<main id="log"><div class="empty" id="empty">Waiting for logs… put the X4 into File Transfer mode to watch a sync.</div></main>
+<script>
+(function(){
+  const logEl=document.getElementById('log'), devEl=document.getElementById('dev'),
+        devTxt=document.getElementById('devtxt'), levelSel=document.getElementById('level'),
+        filterInp=document.getElementById('filter'), followChk=document.getElementById('follow'),
+        pauseBtn=document.getElementById('pause');
+  const MAX_ROWS=4000;
+  let after=0, paused=false, emptyEl=document.getElementById('empty');
+
+  function nearBottom(){ return logEl.scrollHeight-logEl.scrollTop-logEl.clientHeight < 60; }
+
+  function addRow(e){
+    if(emptyEl){ emptyEl.remove(); emptyEl=null; }
+    const row=document.createElement('div');
+    row.className='row '+(e.level||'');
+    const t=document.createElement('span'); t.className='t'; t.textContent=e.time||'';
+    const l=document.createElement('span'); l.className='lvl'; l.textContent=e.level||'';
+    const s=document.createElement('span'); s.className='src';
+    s.textContent=(e.name||'').replace(/^xteink_service\./,'');
+    const m=document.createElement('span'); m.className='msg'; m.textContent=e.msg||'';
+    row.append(t,l,s,m); logEl.appendChild(row);
+    while(logEl.childElementCount>MAX_ROWS) logEl.removeChild(logEl.firstChild);
+  }
+
+  async function poll(){
+    if(paused) return;
+    const p=new URLSearchParams({after:String(after)});
+    if(levelSel.value) p.set('level',levelSel.value);
+    if(filterInp.value.trim()) p.set('contains',filterInp.value.trim());
+    try{
+      const r=await fetch('/api/logs?'+p.toString(),{cache:'no-store'});
+      if(r.ok){
+        const d=await r.json();
+        const stick=followChk.checked && nearBottom();
+        (d.logs||[]).forEach(addRow);
+        after=d.last_id||after;
+        if(stick) logEl.scrollTop=logEl.scrollHeight;
+      }
+    }catch(_){}
+  }
+
+  async function pollDevice(){
+    try{
+      const r=await fetch('/api/device',{cache:'no-store'});
+      if(r.ok){
+        const d=await r.json(), on=d.online===true;
+        devEl.className='badge'+(on?' online':'');
+        devTxt.textContent=(d.host||'device')+(on?' · File Transfer':' · offline');
+      }
+    }catch(_){}
+  }
+
+  function reset(){ after=0; logEl.innerHTML=''; emptyEl=null; poll(); }
+
+  levelSel.addEventListener('change',reset);
+  let fdeb; filterInp.addEventListener('input',()=>{clearTimeout(fdeb); fdeb=setTimeout(reset,300);});
+  pauseBtn.addEventListener('click',()=>{paused=!paused; pauseBtn.textContent=paused?'Resume':'Pause'; if(!paused) poll();});
+  document.getElementById('clear').addEventListener('click',()=>{logEl.innerHTML=''; emptyEl=null;});
+  document.getElementById('save').addEventListener('click',()=>{
+    const text=[...logEl.querySelectorAll('.row')].map(r=>r.textContent.replace(/\s+/g,' ').trim()).join('\n');
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(new Blob([text],{type:'text/plain'}));
+    a.download='xteink-logs.txt'; a.click(); URL.revokeObjectURL(a.href);
+  });
+
+  poll(); pollDevice();
+  setInterval(poll,1200);
+  setInterval(pollDevice,3000);
+})();
+</script>
+</body>
+</html>"""

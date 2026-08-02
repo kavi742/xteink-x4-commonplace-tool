@@ -113,6 +113,12 @@
 				</a>
 			{/if}
 		</div>
+		<div class="sidebar-bottom">
+			<a href="/logs" data-sveltekit-reload class:active={isActive('/logs')}>
+				<span class="sidebar-bottom-icon">▤</span>
+				<span>Logs</span>
+			</a>
+		</div>
 	</aside>
 
 	<main class="main">
@@ -140,6 +146,10 @@
 	<a href="/tbr" class:active={isActive('/tbr')}>
 		<span class="bottom-nav-icon">○</span>
 		<span>TBR</span>
+	</a>
+	<a href="/logs" data-sveltekit-reload class:active={isActive('/logs')}>
+		<span class="bottom-nav-icon">▤</span>
+		<span>Logs</span>
 	</a>
 </nav>
 

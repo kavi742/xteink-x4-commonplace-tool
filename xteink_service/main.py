@@ -21,6 +21,10 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
     datefmt="%H:%M:%S",
 )
+# Retain recent log lines in memory for the browser log viewer at /logs.
+# Installed AFTER basicConfig so the stdout handler (Docker logs) is preserved.
+from xteink_service import logbuffer  # noqa: E402
+logbuffer.install()
 logger = logging.getLogger(__name__)
 
 

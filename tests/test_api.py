@@ -277,6 +277,28 @@ def test_reading_log_with_alias(client, api_env):
     assert entries[0]["percentage_display"] == 12.0
 
 
+def test_reading_log_marks_finishing_entry(client, api_env):
+    doc = "finish123"
+    _seed_alias(api_env["state_db"], doc, "The Odyssey")
+    for pct in (0.50, 0.96, 0.99):  # inserted as ids 1, 2, 3
+        _seed_progress(api_env["koreader_db"], doc, pct)
+
+    entries = client.get("/api/reading-log").json()
+    by_id = {e["id"]: e for e in entries}
+    # The first update to cross the 0.95 threshold finishes the book.
+    assert by_id[2]["finishes_book"] is True
+    assert by_id[1]["finishes_book"] is False
+    assert by_id[3]["finishes_book"] is False
+    # Exactly one finishing entry per book.
+    assert sum(1 for e in entries if e["finishes_book"]) == 1
+
+
+def test_reading_log_unfinished_has_no_star(client, api_env):
+    _seed_progress(api_env["koreader_db"], "wip456", 0.40)
+    entries = client.get("/api/reading-log").json()
+    assert entries and all(e["finishes_book"] is False for e in entries)
+
+
 # ------------------------------------------------------------------ #
 # /api/aliases                                                         #
 # ------------------------------------------------------------------ #

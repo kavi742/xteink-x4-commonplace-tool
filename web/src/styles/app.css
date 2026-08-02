@@ -17,15 +17,23 @@ button:hover{border-color:var(--text-muted)}
 textarea,input[type=text]{font:inherit;font-size:13px;width:100%;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text);padding:.4rem .6rem;resize:vertical}
 textarea:focus,input[type=text]:focus{outline:none;border-color:var(--text-muted)}
 img{display:block;max-width:100%}
-.app{display:grid;grid-template-columns:var(--sidebar-width) 1fr;height:100vh;overflow:hidden}
+/* height:100% (not 100vh) so the app fills the viewport correctly under the
+   FontSizeControl's html `zoom` — Firefox scales 100vh by zoom and overflows,
+   cutting off the pinned sidebar footer; the html>body>app 100% chain doesn't. */
+.app{display:grid;grid-template-columns:var(--sidebar-width) 1fr;height:100%;overflow:hidden}
 .sidebar{border-right:1px solid var(--border);background:var(--bg-sidebar);display:flex;flex-direction:column;overflow:hidden}
 .sidebar-top{padding:.75rem 1rem;border-bottom:1px solid var(--border)}
-.sidebar-scroll{flex:1;overflow-y:auto;padding:.75rem}
+.sidebar-scroll{flex:1;min-height:0;overflow-y:auto;padding:.75rem}
 .main{overflow-y:auto;padding:var(--gap)}
 .panel-overlay{position:fixed;inset-block:0;inset-inline-end:0;width:var(--panel-width);max-width:100vw;background:var(--bg-card);border-left:1px solid var(--border);overflow-y:auto;z-index:100;display:flex;flex-direction:column}
 .nav-links{list-style:none;display:flex;flex-direction:column;gap:2px;margin-bottom:.75rem}
 .nav-links a{display:block;padding:.3rem .5rem;border-radius:var(--radius);font-size:13px;color:var(--text)}
 .nav-links a:hover{background:var(--active-bg)} .nav-links a.active{background:var(--active-bg);font-weight:600}
+.sidebar-bottom{border-top:1px solid var(--border);padding:.5rem .75rem;flex-shrink:0}
+.sidebar-bottom a{display:flex;align-items:center;gap:.5rem;padding:.3rem .5rem;border-radius:var(--radius);font-size:13px;color:var(--text-muted)}
+.sidebar-bottom a:hover{background:var(--active-bg);color:var(--text)}
+.sidebar-bottom a.active{background:var(--active-bg);color:var(--text);font-weight:600}
+.sidebar-bottom-icon{font-size:13px;opacity:.75}
 .book-index{list-style:none;display:flex;flex-direction:column;gap:1px}
 .book-index a{display:flex;justify-content:space-between;align-items:baseline;padding:.2rem .5rem;border-radius:var(--radius);font-size:12px;color:var(--text-muted)}
 .book-index a:hover,.book-index a.active{background:var(--active-bg);color:var(--text)}

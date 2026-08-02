@@ -388,6 +388,11 @@ if _web_build.exists():
 
     _web_root = _web_build.resolve()
     _index = _web_root / "index.html"
+    # The SPA shell lives at a stable URL (/), so it must always be revalidated
+    # — otherwise clients keep loading stale asset references after a redeploy
+    # (the content-hashed /_app bundles are safe to cache forever by contrast).
+    # no-cache = may store but must revalidate via etag (fast 304 if unchanged).
+    _SHELL_HEADERS = {"Cache-Control": "no-cache"}
 
     @app.get("/app")
     @app.get("/app/{_rest:path}")
@@ -397,7 +402,7 @@ if _web_build.exists():
 
     @app.get("/")
     async def _spa_root():
-        return FileResponse(_index)
+        return FileResponse(_index, headers=_SHELL_HEADERS)
 
     @app.get("/{full_path:path}")
     async def _spa_fallback(full_path: str):
@@ -408,4 +413,4 @@ if _web_build.exists():
             # Guard against path traversal outside the build directory.
             if candidate.is_file() and candidate.is_relative_to(_web_root):
                 return FileResponse(candidate)
-        return FileResponse(_index)
+        return FileResponse(_index, headers=_SHELL_HEADERS)

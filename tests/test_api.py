@@ -300,6 +300,48 @@ def test_reading_log_unfinished_has_no_star(client, api_env):
 
 
 # ------------------------------------------------------------------ #
+# Book identity — screenshots + reading log share one URL              #
+# ------------------------------------------------------------------ #
+
+def test_book_page_unifies_screenshots_and_reading_log(client, api_env):
+    """A screenshot-folder slug also serves the reading data even though the
+    alias title is the (different) Calibre library form."""
+    _seed_screenshot(api_env["state_db"], api_env["vault"], "The-Hidden-Keys", 1)
+    _seed_alias(api_env["state_db"], "hk123", "Hidden Keys, The - Andre Alexis")
+    _seed_progress(api_env["koreader_db"], "hk123", 0.42)
+
+    shots = client.get("/api/books/The-Hidden-Keys/screenshots").json()
+    assert len(shots) == 1
+
+    stats = client.get("/api/books/The-Hidden-Keys/reading-stats").json()
+    assert stats["current_pct"] == 42.0
+
+    cal = client.get("/api/books/The-Hidden-Keys/reading-calendar").json()
+    assert cal and cal[-1]["end_pct"] == 42.0
+
+
+def test_reading_log_book_slug_points_to_screenshot_page(client, api_env):
+    """The reading-log link resolves to the screenshot book's URL, not the
+    alias title, so both land on the same page."""
+    _seed_screenshot(api_env["state_db"], api_env["vault"], "The-Hidden-Keys", 1)
+    _seed_alias(api_env["state_db"], "hk123", "Hidden Keys, The - Andre Alexis")
+    _seed_progress(api_env["koreader_db"], "hk123", 0.42)
+
+    entry = client.get("/api/reading-log").json()[0]
+    assert entry["title_resolved"] == "Hidden Keys, The - Andre Alexis"
+    assert entry["book_slug"] == "The-Hidden-Keys"
+
+
+def test_reading_log_book_slug_falls_back_to_title(client, api_env):
+    """A reading-only book (no screenshots) links by its resolved title."""
+    _seed_alias(api_env["state_db"], "ro1", "Some Book - Someone")
+    _seed_progress(api_env["koreader_db"], "ro1", 0.10)
+
+    entry = client.get("/api/reading-log").json()[0]
+    assert entry["book_slug"] == "Some Book - Someone"
+
+
+# ------------------------------------------------------------------ #
 # /api/aliases                                                         #
 # ------------------------------------------------------------------ #
 

@@ -31,6 +31,7 @@ export interface ProgressEntry {
 	percentage: number;
 	percentage_display: number;
 	title_resolved: string | null;
+	book_slug: string | null;
 	at: string;
 	total_pages: number | null;
 	page: number | null;

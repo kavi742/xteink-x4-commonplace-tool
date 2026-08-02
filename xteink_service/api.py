@@ -27,6 +27,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
 
 from xteink_service import logbuffer
+from xteink_service.booktitle import canonical_book_slug
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -95,6 +96,35 @@ def _dedup_by_image(rows: list[dict]) -> list[dict]:
         seen.add(key)
         out.append(r)
     return out
+
+
+def _book_titles_for_slug(conn: sqlite3.Connection, slug: str) -> list[str]:
+    """Distinct screenshot book_titles whose canonical slug matches ``slug``."""
+    target = canonical_book_slug(slug)
+    return [
+        r["book_title"]
+        for r in conn.execute("SELECT DISTINCT book_title FROM synced_screenshots")
+        if r["book_title"] and canonical_book_slug(r["book_title"]) == target
+    ]
+
+
+def _hashes_for_book(slug: str) -> list[str]:
+    """KOReader document hashes for a book, matched by canonical slug.
+
+    The screenshot folder name ("The-Hidden-Keys") and the Calibre alias title
+    ("Hidden Keys, The - Andre Alexis") canonicalise to the same slug, so a
+    book's screenshots and reading progress resolve under one URL.
+    """
+    target = canonical_book_slug(slug)
+    try:
+        with _state_conn() as conn:
+            return [
+                r["hash"]
+                for r in conn.execute("SELECT hash, title FROM document_aliases")
+                if canonical_book_slug(r["title"]) == target
+            ]
+    except Exception:
+        return []
 
 
 # ------------------------------------------------------------------ #
@@ -199,7 +229,10 @@ async def list_books():
 
 @router.get("/api/books/{slug}/screenshots")
 async def list_screenshots(slug: str):
-    """Screenshots for a book (matched by book_title).
+    """Screenshots for a book.
+
+    Matches the book by its canonical slug (see ``booktitle``), so the screenshot
+    folder name and a Calibre-style alias title resolve to the same book.
 
     Stitched screenshots write ONE image but mark each constituent page as its
     own row (all sharing one vault_png_path, needed for sync dedup). Collapse
@@ -208,18 +241,22 @@ async def list_screenshots(slug: str):
     """
     try:
         with _state_conn() as conn:
+            titles = _book_titles_for_slug(conn, slug)
+            if not titles:
+                raise HTTPException(status_code=404, detail=f"Book '{slug}' not found")
+            ph = ",".join("?" for _ in titles)
             rows = conn.execute(
-                """
+                f"""
                 SELECT * FROM synced_screenshots
-                WHERE book_title = ?
+                WHERE book_title IN ({ph})
                   AND id IN (
                       SELECT MIN(id) FROM synced_screenshots
-                      WHERE book_title = ?
+                      WHERE book_title IN ({ph})
                       GROUP BY COALESCE(vault_png_path, CAST(id AS TEXT))
                   )
                 ORDER BY id
                 """,
-                (slug, slug),
+                titles + titles,
             ).fetchall()
         if not rows:
             raise HTTPException(status_code=404, detail=f"Book '{slug}' not found")
@@ -240,15 +277,7 @@ async def reading_calendar(slug: str):
     synced day; the first synced day is measured from the book's start), the
     day's end position, and how many sync sessions occurred.
     """
-    try:
-        with _state_conn() as conn:
-            hashes = [
-                r["hash"] for r in conn.execute(
-                    "SELECT hash FROM document_aliases WHERE title = ?", (slug,)
-                ).fetchall()
-            ]
-    except Exception:
-        hashes = []
+    hashes = _hashes_for_book(slug)
     if not hashes:
         return []
 
@@ -305,15 +334,7 @@ async def book_reading_stats(slug: str):
     (Open Library, or a word-count estimate). ``total_pages``/``current_page``
     are null when no page count is available yet.
     """
-    try:
-        with _state_conn() as conn:
-            hashes = [
-                r["hash"] for r in conn.execute(
-                    "SELECT hash FROM document_aliases WHERE title = ?", (slug,)
-                ).fetchall()
-            ]
-    except Exception:
-        hashes = []
+    hashes = _hashes_for_book(slug)
     if not hashes:
         return {
             "total_pages": None, "page_source": None, "current_pct": 0.0,
@@ -440,10 +461,15 @@ async def reading_log(limit: int = 100):
         }
 
     aliases: dict[str, str] = {}
+    screenshot_by_canon: dict[str, str] = {}
     try:
         with _state_conn() as conn:
             for row in conn.execute("SELECT hash, title FROM document_aliases"):
                 aliases[row["hash"]] = row["title"]
+            for row in conn.execute("SELECT DISTINCT book_title FROM synced_screenshots"):
+                bt = row["book_title"]
+                if bt:
+                    screenshot_by_canon.setdefault(canonical_book_slug(bt), bt)
     except Exception:
         pass
 
@@ -454,9 +480,17 @@ async def reading_log(limit: int = 100):
     for r in rows:
         info = pages_by_hash.get(r["document"])
         total_pages = info["total_pages"] if info else None
+        resolved = aliases.get(r["document"])
+        # Link to the screenshot book's page when one exists (same canonical
+        # slug) so a book's reading log and screenshots share one URL.
+        book_slug = (
+            screenshot_by_canon.get(canonical_book_slug(resolved), resolved)
+            if resolved else None
+        )
         out.append({
             **dict(r),
-            "title_resolved": aliases.get(r["document"]),
+            "title_resolved": resolved,
+            "book_slug": book_slug,
             "percentage_display": round(r["percentage"] * 100, 1),
             "at": datetime.fromtimestamp(r["timestamp"], tz=timezone.utc).isoformat(),
             "total_pages": total_pages,

@@ -7,8 +7,10 @@
 export interface Book {
 	book_title: string;
 	screenshot_count: number;
-	last_synced: string;
-	last_date: string;
+	last_synced: string | null;
+	last_date: string | null;
+	percentage_display: number | null;
+	last_read_at: number | null;
 }
 
 export interface Screenshot {

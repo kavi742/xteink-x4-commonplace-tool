@@ -9,7 +9,7 @@
 <h1 class="page-title">Books</h1>
 
 {#if books.length === 0}
-	<p class="empty">No books archived yet. Press File Transfer on the X4 to sync.</p>
+	<p class="empty">No books yet. Sync reading progress from a device, or press File Transfer on the X4 to archive screenshots.</p>
 {:else}
 	<div class="gallery">
 		{#each books as book}

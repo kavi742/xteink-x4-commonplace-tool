@@ -211,21 +211,71 @@ async def status():
 
 @router.get("/api/books")
 async def list_books():
-    """List all books with screenshot counts."""
+    """List every book, whether it arrived as screenshots or as reading progress.
+
+    A book read on a device that takes no screenshots (a Kindle, say) exists
+    only in the reading log, so screenshots alone would hide it. The two sides
+    are merged on canonical slug — the same book must not appear twice under its
+    screenshot folder name and its alias title.
+
+    Only aliases that actually have progress count: the File Transfer preload
+    maps every epub on the device, and listing all of those would bury the books
+    actually being read.
+    """
+    books: dict[str, dict] = {}
     try:
         with _state_conn() as conn:
-            rows = conn.execute("""
+            for r in conn.execute("""
                 SELECT book_title,
                        COUNT(DISTINCT COALESCE(vault_png_path, CAST(id AS TEXT))) AS screenshot_count,
                        MAX(synced_at)  AS last_synced,
                        MAX(sync_date)  AS last_date
                 FROM synced_screenshots
                 GROUP BY book_title
-                ORDER BY book_title
-            """).fetchall()
-        return [dict(r) for r in rows]
+            """):
+                if not r["book_title"]:
+                    continue
+                books[canonical_book_slug(r["book_title"])] = {
+                    **dict(r), "percentage_display": None, "last_read_at": None,
+                }
     except Exception:
-        return []
+        pass
+
+    try:
+        with _state_conn() as conn:
+            titles = {row["hash"]: row["title"]
+                      for row in conn.execute("SELECT hash, title FROM document_aliases")}
+        with _koreader_conn() as conn:
+            progress = conn.execute("""
+                SELECT document, MAX(timestamp) AS last_read_at,
+                       MAX(percentage) AS pct
+                FROM progress_updates GROUP BY document
+            """).fetchall()
+    except Exception:
+        progress = []
+        titles = {}
+
+    for r in progress:
+        title = titles.get(r["document"])
+        if not title:
+            continue
+        slug = canonical_book_slug(title)
+        entry = books.get(slug)
+        if entry is None:
+            entry = books[slug] = {
+                "book_title": title,
+                "screenshot_count": 0,
+                "last_synced": None,
+                "last_date": None,
+                "percentage_display": None,
+                "last_read_at": None,
+            }
+        # A book split across devices has one row per hash; keep the latest.
+        if entry["last_read_at"] is None or r["last_read_at"] > entry["last_read_at"]:
+            entry["last_read_at"] = r["last_read_at"]
+            entry["percentage_display"] = round(r["pct"] * 100, 1)
+
+    return sorted(books.values(), key=lambda b: b["book_title"].lower())
 
 
 @router.get("/api/books/{slug}/screenshots")

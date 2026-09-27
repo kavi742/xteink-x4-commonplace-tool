@@ -165,6 +165,50 @@ def test_list_books(client, api_env):
     assert books["Fifteen Dogs"]["screenshot_count"] == 1
 
 
+def test_list_books_includes_books_with_only_reading_progress(client, api_env):
+    """A book read on a device that takes no screenshots (a Kindle) still shows."""
+    _seed_screenshot(api_env["state_db"], api_env["vault"], "Pastoral", 1)
+    with sqlite3.connect(api_env["state_db"]) as conn:
+        conn.execute("INSERT INTO document_aliases (hash, title) VALUES (?,?)",
+                     ("kindlehash", "Son of Nobody"))
+    with sqlite3.connect(api_env["koreader_db"]) as conn:
+        conn.execute("INSERT INTO progress_updates "
+                     "(document, progress, percentage, device, timestamp) VALUES (?,?,?,?,?)",
+                     ("kindlehash", "/body/p[1]", 0.42, "KindleVoyage", 1790531387))
+
+    books = {b["book_title"]: b for b in client.get("/api/books").json()}
+    assert books["Son of Nobody"]["screenshot_count"] == 0
+    assert books["Son of Nobody"]["percentage_display"] == 42.0
+    assert books["Pastoral"]["screenshot_count"] == 1
+
+
+def test_list_books_does_not_list_unread_device_books(client, api_env):
+    """The File Transfer preload aliases every epub on the SD card; only books
+    with actual progress belong in the list."""
+    with sqlite3.connect(api_env["state_db"]) as conn:
+        conn.execute("INSERT INTO document_aliases (hash, title) VALUES (?,?)",
+                     ("neverread", "Some Book Sitting On The Card"))
+
+    assert client.get("/api/books").json() == []
+
+
+def test_list_books_merges_screenshots_and_progress_for_one_book(client, api_env):
+    """Screenshot folder name and Calibre-style alias title are the same book."""
+    _seed_screenshot(api_env["state_db"], api_env["vault"], "The-Hidden-Keys", 1)
+    with sqlite3.connect(api_env["state_db"]) as conn:
+        conn.execute("INSERT INTO document_aliases (hash, title) VALUES (?,?)",
+                     ("h1", "Hidden Keys, The - Andre Alexis"))
+    with sqlite3.connect(api_env["koreader_db"]) as conn:
+        conn.execute("INSERT INTO progress_updates "
+                     "(document, progress, percentage, timestamp) VALUES (?,?,?,?)",
+                     ("h1", "/body/p[1]", 0.6, 1790531387))
+
+    books = client.get("/api/books").json()
+    assert len(books) == 1
+    assert books[0]["screenshot_count"] == 1
+    assert books[0]["percentage_display"] == 60.0
+
+
 # ------------------------------------------------------------------ #
 # /api/books/{slug}/screenshots                                        #
 # ------------------------------------------------------------------ #

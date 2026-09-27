@@ -181,6 +181,22 @@ class SyncState:
             ).fetchone()
         return row[0] if row else None
 
+    def set_title(
+        self, doc_hash: str, title: str, filename: str = "",
+        resolved_by: str = "manual",
+    ) -> None:
+        """Map a progress hash to a title, leaving any existing mapping alone.
+
+        Used for titles a client volunteers via KOReader's `metadata` payload:
+        a hand-corrected alias must win over whatever the device reports.
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO document_aliases "
+                "(hash, title, filename, resolved_by) VALUES (?,?,?,?)",
+                (doc_hash, title, filename, resolved_by),
+            )
+
     # ------------------------------------------------------------------ #
     # Highlights                                                           #
     # ------------------------------------------------------------------ #

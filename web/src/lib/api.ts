@@ -33,10 +33,32 @@ export interface ProgressEntry {
 	title_resolved: string | null;
 	book_slug: string | null;
 	at: string;
+	device: string | null;
+	device_id: string | null;
 	total_pages: number | null;
 	page: number | null;
 	page_source: string | null;
 	finishes_book?: boolean;
+}
+
+export interface SyncDevice {
+	device_id: string;
+	device: string;
+	first_seen: number;
+	last_seen: number;
+	update_count: number;
+	book_count: number;
+	scannable: boolean;
+	last_document: string | null;
+	last_percentage_display: number | null;
+}
+
+export interface UnresolvedAlias {
+	document: string;
+	percentage_display: number;
+	last_seen: number;
+	device: string;
+	device_id: string;
 }
 
 export interface ReadingCalendarDay {
@@ -71,6 +93,8 @@ export interface Alias {
 	title: string;
 	filename: string;
 	resolved_by: string;
+	canonical?: string;
+	linked?: boolean;
 }
 
 export interface Highlight {
@@ -213,9 +237,13 @@ function createApi(customFetch: Fetch = fetch) {
 
 		aliases: {
 			list: () => get<Alias[]>('/api/aliases'),
-			listUnresolved: () => get<{document:string; percentage_display:number; last_seen:number}[]>('/api/aliases/unresolved'),
+			listUnresolved: () => get<UnresolvedAlias[]>('/api/aliases/unresolved'),
 			set: (hash: string, title: string, filename = '') =>
 				put<Alias>(`/api/aliases/${hash}`, { title, filename }),
+		},
+
+		devices: {
+			list: () => get<SyncDevice[]>('/api/devices'),
 		},
 	};
 }

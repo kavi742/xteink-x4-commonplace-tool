@@ -179,6 +179,7 @@ class VaultWriter:
         progress: str | None = None,
         prev_percentage: float | None = None,
         prev_day: date | None = None,
+        device: str | None = None,
     ) -> None:
         date_str = day.strftime("%Y-%m-%d")
         log_path = self.vault_path / "Reading Log" / f"{date_str}.md"
@@ -194,6 +195,8 @@ class VaultWriter:
             body = f"{percentage:.1f}%"
         if loc:
             body += f"  [{loc}]"
+        if device:
+            body += f"  \u00b7 {device}"
         new_line = f"- **{title}** \u2014 {body}\n"
 
         content = log_path.read_text()
@@ -220,6 +223,7 @@ class VaultWriter:
         total_pages: int | None = None,
         progress: str | None = None,
         first_today_pct: float | None = None,
+        device: str | None = None,
     ) -> None:
         date_str = day.strftime("%Y-%m-%d")
         book_slug = _sanitize(title)
@@ -233,6 +237,8 @@ class VaultWriter:
             body = f"{percentage:.1f}%"
         if loc:
             body += f"  [{loc}]"
+        if device:
+            body += f"  \u00b7 {device}"
         new_line = f"- {body}\n"
 
         if not book_path.exists():

@@ -10,6 +10,7 @@ Mounted on the koreader_sync FastAPI app (port 8090):
   GET  /api/screenshots/{id}/image     — serve PNG from vault filesystem
   PUT  /api/screenshots/{id}           — update ocr_corrected / user_notes
   GET  /api/reading-log                — KOReader progress history (with titles)
+  GET  /api/devices                    — KOReader sync clients (X4, Kindle, …)
   GET  /api/aliases                    — hash → title table
   PUT  /api/aliases/{hash}             — set/update a book title alias
   POST /api/vault/rebuild              — rebuild all vault markdown from DB
@@ -598,22 +599,75 @@ async def reading_stats():
 
 
 # ------------------------------------------------------------------ #
+# Sync devices                                                         #
+# ------------------------------------------------------------------ #
+
+@router.get("/api/devices")
+async def list_devices():
+    """KOReader sync clients that have reported progress.
+
+    Any device running KOReader's Progress sync plugin shows up here — the X4
+    (CrossPoint) and, for example, a Kindle running KOReader. `scannable` marks
+    the X4, the only device whose book hashes sync_once can auto-resolve.
+    """
+    from xteink_service.koreader_sync import _SCANNABLE_DEVICE_IDS, _store
+    out = []
+    for d in _store.devices():
+        last_row = None
+        try:
+            with _koreader_conn() as conn:
+                last_row = conn.execute(
+                    "SELECT document, percentage FROM progress_updates "
+                    "WHERE device_id = ? ORDER BY id DESC LIMIT 1",
+                    (d["device_id"],),
+                ).fetchone()
+        except Exception:
+            pass
+        out.append({
+            **d,
+            "scannable": d["device_id"] in _SCANNABLE_DEVICE_IDS,
+            "last_document": last_row["document"] if last_row else None,
+            "last_percentage_display": (
+                round(last_row["percentage"] * 100, 1) if last_row else None
+            ),
+        })
+    return out
+
+
+# ------------------------------------------------------------------ #
 # Phase 9 — Aliases                                                   #
 # ------------------------------------------------------------------ #
 
 @router.get("/api/aliases")
 async def list_aliases():
-    """All document hash → title mappings."""
+    """All document hash → title mappings.
+
+    `linked` marks rows whose book resolves to the same canonical title as
+    another row: those hashes are kept in sync with each other across devices.
+    """
     with _state_conn() as conn:
-        rows = conn.execute(
+        rows = [dict(r) for r in conn.execute(
             "SELECT * FROM document_aliases ORDER BY title"
-        ).fetchall()
-    return [dict(r) for r in rows]
+        )]
+    counts: dict[str, int] = {}
+    for r in rows:
+        slug = canonical_book_slug(r["title"])
+        counts[slug] = counts.get(slug, 0) + 1
+    for r in rows:
+        slug = canonical_book_slug(r["title"])
+        r["canonical"] = slug
+        r["linked"] = counts.get(slug, 0) > 1
+    return rows
 
 
 @router.get("/api/aliases/unresolved")
 async def list_unresolved_aliases():
-    """Hashes seen in the KOReader reading log that have no title mapping yet."""
+    """Hashes seen in the KOReader reading log that have no title mapping yet.
+
+    Includes the device that last reported each hash: only the X4's hashes can
+    be auto-resolved by sync_once, so the UI needs to know which ones must be
+    mapped by hand.
+    """
     try:
         mapped: set[str] = set()
         with _state_conn() as conn:
@@ -621,14 +675,23 @@ async def list_unresolved_aliases():
                 mapped.add(row["hash"])
         with _koreader_conn() as conn:
             rows = conn.execute(
-                "SELECT DISTINCT document, MAX(percentage) as pct, MAX(timestamp) as last_seen "
+                "SELECT document, MAX(percentage) as pct, MAX(timestamp) as last_seen "
                 "FROM progress_updates GROUP BY document ORDER BY last_seen DESC"
             ).fetchall()
+            latest_device = {
+                r["document"]: (r["device"] or "", r["device_id"] or "")
+                for r in conn.execute(
+                    "SELECT document, device, device_id FROM progress_updates "
+                    "WHERE id IN (SELECT MAX(id) FROM progress_updates GROUP BY document)"
+                )
+            }
         return [
             {
                 "document": r["document"],
                 "percentage_display": round(r["pct"] * 100, 1),
                 "last_seen": r["last_seen"],
+                "device": latest_device.get(r["document"], ("", ""))[0],
+                "device_id": latest_device.get(r["document"], ("", ""))[1],
             }
             for r in rows
             if r["document"] not in mapped

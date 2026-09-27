@@ -28,6 +28,11 @@
 		}
 		return [...map.values()];
 	});
+
+	// Only worth showing the device once progress comes from more than one.
+	let multiDevice = $derived(
+		new Set(entries.map((e) => e.device).filter(Boolean)).size > 1
+	);
 </script>
 
 <svelte:head><title>Reading Log — xteink</title></svelte:head>
@@ -77,7 +82,7 @@
 {/if}
 
 {#if entries.length === 0}
-	<p class="empty">No reading progress yet. Configure KOReader Sync on the X4.</p>
+	<p class="empty">No reading progress yet. Configure KOReader Progress sync on your device.</p>
 {:else}
 	{#each grouped as group}
 		<div class="date-group">
@@ -97,6 +102,7 @@
 						{#if entry.page}p{entry.page}{#if entry.total_pages} / ~{entry.total_pages}{/if}{:else}{entry.percentage_display}%{/if}
 						{#if cfi(entry.progress)} · {cfi(entry.progress)}{/if}
 						· {new Date(entry.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+						{#if multiDevice && entry.device} · <span class="device">{entry.device}</span>{/if}
 					</div>
 				</div>
 			{/each}
@@ -112,4 +118,5 @@
 	.stat-num { font-size: 20px; font-weight: 700; color: var(--text); line-height: 1.15; }
 	.stat-cap { font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .05em; }
 	.finish-star { color: #e5b567; margin-right: .3rem; }
+	.device { font-variant: small-caps; letter-spacing: .03em; }
 </style>

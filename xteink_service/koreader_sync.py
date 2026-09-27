@@ -1,6 +1,17 @@
 """
-KOReader sync server — receives reading progress from the X4.
+KOReader sync server — receives reading progress from any KOReader client.
 Stores updates in SQLite and writes to the Obsidian vault.
+
+Any device running KOReader's Progress sync plugin can point here: the X4
+(CrossPoint), and a Kindle running KOReader (e.g. with kindle.koplugin, which
+makes Kindle-native books readable in KOReader). The protocol is identical
+kosync, so devices are distinguished by the `device` / `device_id` fields they
+send and tracked in the `devices` table.
+
+Book titles come from the optional `metadata` payload a device sends when
+"Send Metadata" is enabled (CrossPoint: Settings > System > KOReader Sync;
+KOReader: Menu > Tools > Progress sync). Both are off by default. With it on,
+no title has to be recovered from the document digest.
 
 Endpoints
 ---------
@@ -16,6 +27,7 @@ Set SYNC_USER and SYNC_PASSWORD env vars to require HTTP Basic Auth.
 Leave them unset to disable auth (e.g. when Tailscale is the only gate).
 """
 import asyncio
+import json
 import logging
 import hashlib
 import os
@@ -27,7 +39,7 @@ from pathlib import Path
 from typing import Annotated, Optional
 
 from fastapi import Depends, FastAPI, Header, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 logger = logging.getLogger(__name__)
 
@@ -149,6 +161,82 @@ class ProgressStore:
                     timestamp   INTEGER DEFAULT (strftime('%s','now'))
                 )
             """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS devices (
+                    device_id   TEXT PRIMARY KEY,
+                    device      TEXT    DEFAULT '',
+                    first_seen  INTEGER,
+                    last_seen   INTEGER
+                )
+            """)
+            # Backfill devices seen before the table existed.
+            conn.execute("""
+                INSERT OR IGNORE INTO devices (device_id, device, first_seen, last_seen)
+                SELECT COALESCE(NULLIF(device_id,''), device), device,
+                       MIN(timestamp), MAX(timestamp)
+                  FROM progress_updates
+                 WHERE COALESCE(NULLIF(device_id,''), device) IS NOT NULL
+                   AND COALESCE(NULLIF(device_id,''), device) != ''
+                 GROUP BY COALESCE(NULLIF(device_id,''), device)
+            """)
+            try:
+                conn.execute("ALTER TABLE progress_updates ADD COLUMN extra TEXT")
+            except sqlite3.OperationalError:
+                pass  # column already exists
+
+    def record_device(self, device: str, device_id: str) -> None:
+        """Register a syncing client. Called before the de-dupe check so a device
+        that only ever re-sends a position it already reported is still known."""
+        if not device_id and not device:
+            return
+        ts = int(datetime.now(timezone.utc).timestamp())
+        with self._connect() as conn:
+            conn.execute(
+                """INSERT INTO devices (device_id, device, first_seen, last_seen)
+                   VALUES (?,?,?,?)
+                   ON CONFLICT(device_id) DO UPDATE SET
+                       device    = excluded.device,
+                       last_seen = excluded.last_seen""",
+                (device_id or device, device, ts, ts),
+            )
+
+    def devices(self) -> list[dict]:
+        """Known sync clients, most recently seen first, with update counts."""
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """SELECT d.device_id, d.device, d.first_seen, d.last_seen,
+                          (SELECT COUNT(*) FROM progress_updates p
+                            WHERE p.device_id = d.device_id) AS update_count,
+                          (SELECT COUNT(DISTINCT p.document) FROM progress_updates p
+                            WHERE p.device_id = d.device_id) AS book_count
+                     FROM devices d ORDER BY d.last_seen DESC"""
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def devices_for_document(self, document: str) -> list[str]:
+        """Distinct device names that have ever synced this document."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT DISTINCT device FROM progress_updates "
+                "WHERE document = ? AND device != '' AND device IS NOT NULL",
+                (document,),
+            ).fetchall()
+        return [r[0] for r in rows]
+
+    def latest_across(self, documents: list[str]) -> dict | None:
+        """Newest record among several document hashes for the same book."""
+        if not documents:
+            return None
+        placeholders = ",".join("?" * len(documents))
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                f"SELECT * FROM progress_updates WHERE document IN ({placeholders}) "
+                "ORDER BY timestamp DESC, id DESC LIMIT 1",
+                documents,
+            ).fetchone()
+        return dict(row) if row else None
 
     def upsert(
         self,
@@ -159,14 +247,15 @@ class ProgressStore:
         device_id: str = "",
         title: str = "",
         author: str = "",
+        extra: str | None = None,
     ) -> dict:
         ts = int(datetime.now(timezone.utc).timestamp())
         with self._connect() as conn:
             conn.execute(
                 """INSERT INTO progress_updates
-                   (document, progress, percentage, device, device_id, title, author, timestamp)
-                   VALUES (?,?,?,?,?,?,?,?)""",
-                (document, progress, percentage, device, device_id, title, author, ts),
+                   (document, progress, percentage, device, device_id, title, author, extra, timestamp)
+                   VALUES (?,?,?,?,?,?,?,?,?)""",
+                (document, progress, percentage, device, device_id, title, author, extra, ts),
             )
         return self._latest(document)
 
@@ -201,6 +290,12 @@ _store = ProgressStore(
     os.getenv("KOREADER_DB", "/data/state/koreader.db")
 )
 
+# Only the X4 exposes a file-listing API, so only hashes it reports can be
+# resolved to titles without the device's help, by scanning during File
+# Transfer. Every client can instead volunteer its own title — see
+# DocumentMetadata.
+_SCANNABLE_DEVICE_IDS = {"crosspoint-reader"}
+
 
 # ------------------------------------------------------------------ #
 # ntfy.sh notifications                                               #
@@ -232,16 +327,57 @@ def _notify(message: str, title: str = "xteink-service") -> None:
 # Request / response models                                           #
 # ------------------------------------------------------------------ #
 
+class DocumentMetadata(BaseModel):
+    """The optional `metadata` payload, sent when the device has "Send Metadata"
+    enabled (off by default on both CrossPoint and KOReader).
+
+    CrossPoint: Settings > System > KOReader Sync > Send Metadata.
+    KOReader:   Menu > Tools > Progress sync > Send document metadata.
+
+    The official kosync server ignores it. For us it is what removes the
+    hash-matching problem: the device names its own book, so no title has to be
+    recovered from the digest.
+    """
+    filename: Optional[str] = None
+    title:    Optional[str] = None
+    authors:  Optional[str | list[str]] = None
+
+    def author_str(self) -> str:
+        if isinstance(self.authors, list):
+            return ", ".join(a for a in self.authors if a)
+        # KOReader joins multiple authors with newlines.
+        return ", ".join(p.strip() for p in (self.authors or "").splitlines() if p.strip())
+
+
 class ProgressIn(BaseModel):
+    # Unknown fields are kept rather than dropped: CrossPoint and KOReader both
+    # add payload fields over time, and silently discarding them hides them.
+    model_config = ConfigDict(extra="allow")
+
     # KOReader kosync fields
     document:   str
     progress:   str = "0"
     percentage: float = 0.0
     device:     str = ""
     device_id:  str = ""
-    # Optional metadata (CrossPoint / custom clients)
+    metadata:   Optional[DocumentMetadata] = None
+    # Optional flat metadata (CrossPoint / custom clients)
     title:  Optional[str] = None
     author: Optional[str] = None
+
+    def resolved_title(self) -> str:
+        """Best title the client gave us, if any."""
+        md = self.metadata
+        if md:
+            if md.title:
+                return md.title.strip()
+            if md.filename:
+                return md.filename.rsplit(".", 1)[0].strip()
+        return (self.title or "").strip()
+
+    def resolved_author(self) -> str:
+        return ((self.metadata.author_str() if self.metadata else "")
+                or (self.author or "").strip())
 
 
 # ------------------------------------------------------------------ #
@@ -286,6 +422,12 @@ def _kosync_view(rec: dict | None) -> dict:
 @app.put("/syncs/progress")
 async def put_progress(update: ProgressIn, _: KosyncAuth):
     """Receive a reading position from KOReader and store it."""
+    # Registered before the de-dupe check below, so a device whose position is
+    # already known (e.g. it just pulled it from here) is still recorded.
+    _store.record_device(update.device, update.device_id)
+    _record_client_title(update)
+    extra = _log_unmodelled_fields(update)
+
     # De-dupe: KOReader re-syncs the same position periodically. If nothing has
     # moved since the last sync for this document, don't log another identical
     # reading-log entry (or re-write the vault).
@@ -300,11 +442,54 @@ async def put_progress(update: ProgressIn, _: KosyncAuth):
         percentage=update.percentage,
         device=update.device,
         device_id=update.device_id,
-        title=update.title or "",
-        author=update.author or "",
+        title=update.resolved_title(),
+        author=update.resolved_author(),
+        extra=extra,
     )
     await _write_progress_to_vault(update)
     return _kosync_view(record)
+
+
+_seen_extra_shapes: set[tuple[str, tuple[str, ...]]] = set()
+
+
+def _log_unmodelled_fields(update: ProgressIn) -> str | None:
+    """Record payload fields the kosync schema doesn't define.
+
+    CrossPoint and KOReader both extend the payload between releases; logging
+    the first occurrence of each new shape is how we notice.
+    """
+    fields = update.model_extra
+    if not fields:
+        return None
+    shape = (update.device_id or update.device, tuple(sorted(fields)))
+    if shape not in _seen_extra_shapes:
+        _seen_extra_shapes.add(shape)
+        logger.info("Extra kosync fields from %s: %s",
+                    update.device or "unknown device", json.dumps(fields, default=str))
+    return json.dumps(fields, default=str)
+
+
+def _record_client_title(update: ProgressIn) -> None:
+    """Persist a title the client volunteered so the hash resolves from now on.
+
+    For devices we can't scan (a Kindle running KOReader) this is the only
+    automatic source of a book title — enable "Send document metadata" under
+    KOReader's Progress sync menu to turn it on.
+    """
+    title = update.resolved_title()
+    if not title:
+        return
+    try:
+        from xteink_service.state import SyncState
+        SyncState(os.getenv("STATE_DB", "/data/state/state.db")).set_title(
+            update.document, title,
+            filename=(update.metadata.filename or "") if update.metadata else "",
+            resolved_by="metadata",
+        )
+    except Exception as exc:
+        logger.debug("Could not store client title for %s: %s",
+                     update.document[:16], exc)
 
 
 async def _write_progress_to_vault(update: ProgressIn) -> None:
@@ -313,11 +498,12 @@ async def _write_progress_to_vault(update: ProgressIn) -> None:
     if not os.path.isdir(vault_path):
         return
 
-    # Resolve title: alias table → request metadata → give up
-    # Note: device port 80 is closed during KOReader sync (reading mode), so
-    # auto-scan is not attempted here. Aliases are resolved by sync_once.py
-    # which runs during File Transfer mode when the file listing API is available.
-    title = update.title or None
+    # Resolve title: alias table (incl. titles clients volunteered) → this
+    # request's metadata → give up.
+    # Note: the X4's port 80 is closed during KOReader sync (reading mode), so
+    # auto-scan is not attempted here. Its aliases are resolved by sync_once.py
+    # during File Transfer mode, when the file listing API is available.
+    title = update.resolved_title() or None
     state_db = os.getenv("STATE_DB", "/data/state/state.db")
     try:
         from xteink_service.state import SyncState
@@ -325,7 +511,13 @@ async def _write_progress_to_vault(update: ProgressIn) -> None:
     except Exception:
         pass
     if not title:
-        logger.debug("No title for %s — skipping vault write (run sync_once to resolve)", update.document[:16])
+        hint = "turn on Send Metadata on the device, or map it at /aliases"
+        if update.device_id in _SCANNABLE_DEVICE_IDS:
+            hint += " (or run sync_once in File Transfer mode)"
+        logger.info(
+            "No title for %s (from %s) — skipping vault write; %s",
+            update.document[:16], update.device or "unknown device", hint,
+        )
         return
 
     try:
@@ -347,15 +539,22 @@ async def _write_progress_to_vault(update: ProgressIn) -> None:
         prev_day  = (DateType.fromtimestamp(prev_records[0]["timestamp"])
                      if prev_records else None)
 
+        # Only label the device once a book has actually been read on more than
+        # one — a single-device library shouldn't carry noise in every line.
+        device = update.device if len(_store.devices_for_document(update.document)) > 1 else None
+
         vw = VaultWriter(vault_path)
         vw.write_reading_log(today, title, pct,
                              progress=update.progress,
                              prev_percentage=prev_pct,
-                             prev_day=prev_day)
-        vw.update_book_timeline(title, update.author or "", today, pct,
+                             prev_day=prev_day,
+                             device=device)
+        vw.update_book_timeline(title, update.resolved_author(), today, pct,
                                 progress=update.progress,
-                                first_today_pct=first_today_pct)
-        logger.info("Vault: wrote progress for %s (%.1f%%)", title, pct)
+                                first_today_pct=first_today_pct,
+                                device=device)
+        logger.info("Vault: wrote progress for %s (%.1f%%) from %s",
+                    title, pct, update.device or "unknown device")
         _notify(f"Reading: {title} — {pct:.1f}%")
     except Exception as exc:
         logger.warning("Vault write failed for %s: %s", title, exc)
@@ -363,8 +562,44 @@ async def _write_progress_to_vault(update: ProgressIn) -> None:
 
 @app.get("/syncs/progress/{document:path}")
 async def get_progress(document: str, _: KosyncAuth):
-    """Return the last known position for a document (kosync fields only)."""
-    return _kosync_view(_store._latest(document))
+    """Return the last known position for a document (kosync fields only).
+
+    Devices only sync with each other when their document digests match, and two
+    devices holding different copies of a book never produce the same digest.
+    So the newest position is taken across every hash that resolves to the same
+    book — see `_linked_documents`.
+    """
+    linked = _linked_documents(document)
+    record = _store.latest_across(linked) if linked else _store._latest(document)
+    if record and record["document"] != document:
+        logger.info("Cross-device sync: serving %s's position for %s to a client asking for %s",
+                    record["device"] or "?", record["document"][:12], document[:12])
+        # Echo the requested hash: the client asked about its own copy.
+        record = {**record, "document": document}
+    return _kosync_view(record)
+
+
+def _linked_documents(document: str) -> list[str]:
+    """Every document hash that refers to the same book as `document`.
+
+    Two devices reading the same book produce different digests unless they hold
+    byte-identical files with identical names, so hashes are grouped by the book
+    title they resolve to instead. Mapping a hash to a title (auto-scan, KOReader
+    metadata, or by hand at /aliases) is therefore what links two devices.
+    """
+    try:
+        state_db = os.getenv("STATE_DB", "/data/state/state.db")
+        with sqlite3.connect(state_db) as conn:
+            rows = conn.execute("SELECT hash, title FROM document_aliases").fetchall()
+    except Exception:
+        return []
+
+    from xteink_service.booktitle import canonical_book_slug
+    by_hash = {h: canonical_book_slug(t) for h, t in rows}
+    slug = by_hash.get(document)
+    if not slug:
+        return []
+    return [h for h, s in by_hash.items() if s == slug]
 
 
 @app.get("/syncs/progress")

@@ -434,6 +434,12 @@ async def put_progress(update: ProgressIn, _: KosyncAuth):
     last = _store._latest(update.document)
     if last and last.get("progress") == update.progress \
             and last.get("percentage") == update.percentage:
+        # Logged because this path writes nothing: without it a received-but-
+        # unchanged push is indistinguishable from one that never arrived.
+        logger.info("Position unchanged for %s from %s (%.1f%%, metadata: %s)",
+                    update.document[:12], update.device or "unknown device",
+                    update.percentage * 100,
+                    "yes" if update.metadata else "no")
         return _kosync_view(last)
 
     record = _store.upsert(

@@ -153,6 +153,24 @@ def test_device_recorded_even_when_position_is_deduped():
     assert len(_store._latest_n("dedup.epub", 10)) == 1
 
 
+def test_deduped_push_is_logged(caplog):
+    """This path stores nothing, so the log is the only way to tell a received
+    push from one that never arrived."""
+    client.post("/syncs/progress", json={
+        "document": "quiet.epub", "progress": "0/Ch2", "percentage": 0.2,
+        "device": "KindleVoyage", "device_id": "kindle-abc"})
+
+    with caplog.at_level("INFO", logger="xteink_service.koreader_sync"):
+        client.post("/syncs/progress", json={
+            "document": "quiet.epub", "progress": "0/Ch2", "percentage": 0.2,
+            "device": "KindleVoyage", "device_id": "kindle-abc",
+            "metadata": {"title": "Quiet Book"}})
+
+    assert "Position unchanged" in caplog.text
+    assert "KindleVoyage" in caplog.text
+    assert "metadata: yes" in caplog.text
+
+
 def test_devices_for_document_tracks_each_reader():
     client.post("/syncs/progress", json={
         "document": "shared.epub", "progress": "0/Ch1", "percentage": 0.1,

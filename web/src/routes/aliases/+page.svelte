@@ -13,6 +13,12 @@
 		new Set(devices.filter(d => d.scannable).map(d => d.device_id))
 	);
 
+	// Two hashes become one book by sharing a title, so offer the existing ones:
+	// retyping a title by hand is how a cross-device link silently fails.
+	const knownTitles = $derived(
+		[...new Set(aliases.map(a => a.title).filter(Boolean))].sort()
+	);
+
 	function startEdit(hash: string, current: string) {
 		editing = hash;
 		editValue = current;
@@ -21,10 +27,11 @@
 	async function saveEdit(hash: string) {
 		if (!editValue.trim()) return;
 		await api.aliases.set(hash, editValue.trim());
-		aliases = aliases.map(a => a.hash === hash ? { ...a, title: editValue.trim() } : a);
-		// Remove from unresolved if it was there
 		unresolved = unresolved.filter(u => u.document !== hash);
 		editing = null;
+		// Refetched rather than patched locally: `linked` is derived server-side,
+		// and a rename is exactly what changes it.
+		aliases = await api.aliases.list().catch(() => aliases);
 	}
 
 	function keydown(e: KeyboardEvent, hash: string) {
@@ -38,7 +45,13 @@
 <h1 class="page-title">Aliases</h1>
 <p style="font-size:12px;color:var(--text-muted);margin-bottom:1rem">
 	Hash → title mappings for books in the reading log. Click a title to rename.
+	Giving two hashes the same title makes them one book, so a Kindle and the X4
+	share its progress, page and calendar.
 </p>
+
+<datalist id="known-titles">
+	{#each knownTitles as t}<option value={t}></option>{/each}
+</datalist>
 
 {#if devices.length > 0}
 	<div style="margin-bottom:1.5rem">
@@ -85,7 +98,7 @@
 						<td style="font-size:11px">{u.percentage_display}%</td>
 						<td>
 							{#if editing === u.document}
-								<input type="text" bind:value={editValue}
+								<input type="text" bind:value={editValue} list="known-titles"
 									onblur={() => saveEdit(u.document)}
 									onkeydown={(e) => keydown(e, u.document)}
 									style="max-width:24ch" autofocus />
@@ -119,6 +132,7 @@
 							<input
 								type="text"
 								bind:value={editValue}
+								list="known-titles"
 								onblur={() => saveEdit(alias.hash)}
 								onkeydown={(e) => keydown(e, alias.hash)}
 								style="max-width:24ch"

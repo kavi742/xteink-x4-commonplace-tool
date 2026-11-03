@@ -8,6 +8,11 @@ makes Kindle-native books readable in KOReader). The protocol is identical
 kosync, so devices are distinguished by the `device` / `device_id` fields they
 send and tracked in the `devices` table.
 
+CrossPoint hardcodes those two fields, so a second CrossPoint reader would
+otherwise be indistinguishable from the X4 and clobber its position. Give the
+second one an `X-Device-Name` header (Settings > KOReader Sync > Custom Header)
+and it is tracked separately — see `_device_override`.
+
 Book titles come from the optional `metadata` payload a device sends when
 "Send Metadata" is enabled (CrossPoint: Settings > System > KOReader Sync;
 KOReader: Menu > Tools > Progress sync). Both are off by default. With it on,
@@ -31,6 +36,7 @@ import json
 import logging
 import hashlib
 import os
+import re
 import secrets
 import sqlite3
 from datetime import date as DateType
@@ -124,6 +130,33 @@ def _require_kosync_auth(
 
 
 KosyncAuth = Annotated[None, Depends(_require_kosync_auth)]
+
+
+# ------------------------------------------------------------------ #
+# Per-device identity override                                         #
+# ------------------------------------------------------------------ #
+# CrossPoint compiles `device` / `device_id` in as constants ("CrossPoint" /
+# "crosspoint-reader"), so every CrossPoint reader claims the same identity and
+# the newest push wins across all of them. The firmware does send two
+# user-configurable headers on every kosync request, which is the only per-unit
+# signal available: set `X-Device-Name` on the secondary reader to separate it.
+
+def _device_slug(name: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+
+
+def _device_override(
+    x_device_name: Annotated[str | None, Header()] = None,
+    x_device_id: Annotated[str | None, Header()] = None,
+) -> tuple[str, str]:
+    """Identity from the client's custom headers, or ('', '') when unset."""
+    name = (x_device_name or "").strip()
+    if not name:
+        return ("", "")
+    return (name, (x_device_id or "").strip() or _device_slug(name) or name)
+
+
+DeviceOverride = Annotated[tuple[str, str], Depends(_device_override)]
 
 
 # ------------------------------------------------------------------ #
@@ -420,8 +453,17 @@ def _kosync_view(rec: dict | None) -> dict:
 
 @app.post("/syncs/progress")
 @app.put("/syncs/progress")
-async def put_progress(update: ProgressIn, _: KosyncAuth):
+async def put_progress(update: ProgressIn, _: KosyncAuth, override: DeviceOverride):
     """Receive a reading position from KOReader and store it."""
+    # Applied before anything reads the payload identity, so the override lands
+    # in the devices table, the stored row, the logs and the vault alike.
+    name, ident = override
+    if name:
+        if update.device_id and update.device_id != ident:
+            logger.info("Device %s (%s) identifying as %s via X-Device-Name",
+                        update.device or "?", update.device_id, ident)
+        update.device, update.device_id = name, ident
+
     # Registered before the de-dupe check below, so a device whose position is
     # already known (e.g. it just pulled it from here) is still recorded.
     _store.record_device(update.device, update.device_id)

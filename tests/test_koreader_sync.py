@@ -75,6 +75,38 @@ def test_list_progress_returns_all():
     assert isinstance(r.json(), list)
 
 
+def test_device_name_header_overrides_hardcoded_identity():
+    """Two CrossPoint readers send the same device_id; the header separates them."""
+    payload = {"document": "twins.epub", "progress": "0/Ch2", "percentage": 8.0,
+               "device": "CrossPoint", "device_id": "crosspoint-reader"}
+    client.post("/syncs/progress", json=payload)  # the X4, no header
+    r = client.post("/syncs/progress",
+                    json={**payload, "progress": "0/Ch3", "percentage": 9.0},
+                    headers={"x-device-name": "Sticky"})
+    assert r.status_code == 200
+    assert r.json()["device"] == "Sticky"
+    assert r.json()["device_id"] == "sticky"
+
+    ids = {d["device_id"] for d in _store.devices()}
+    assert {"sticky", "crosspoint-reader"} <= ids
+    assert set(_store.devices_for_document("twins.epub")) == {"CrossPoint", "Sticky"}
+
+
+def test_device_id_header_wins_over_slug():
+    r = client.post("/syncs/progress",
+                    json={"document": "slug.epub", "progress": "0", "percentage": 1.0},
+                    headers={"x-device-name": "Sticky", "x-device-id": "sticky-02"})
+    assert r.json()["device_id"] == "sticky-02"
+
+
+def test_no_device_header_leaves_payload_identity_untouched():
+    r = client.post("/syncs/progress", json={
+        "document": "plain.epub", "progress": "0", "percentage": 2.0,
+        "device": "CrossPoint", "device_id": "crosspoint-reader"})
+    assert r.json()["device"] == "CrossPoint"
+    assert r.json()["device_id"] == "crosspoint-reader"
+
+
 def test_kosync_auth_off_by_default():
     # No KOSYNC_USER/PASSWORD configured at import -> endpoints stay open.
     assert ks._KOSYNC_REQUIRED is False

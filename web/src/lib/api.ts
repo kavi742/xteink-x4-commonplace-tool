@@ -109,6 +109,13 @@ export interface Highlight {
 	created_at: string;
 }
 
+/** A highlight joined with its screenshot's metadata, as /api/highlights returns. */
+export interface HighlightWithMeta extends Highlight {
+	book_title: string;
+	sync_date: string;
+	vault_png_path: string;
+}
+
 export interface SearchResult extends Screenshot {
 	match_fields: string[];
 	snippet: string;
@@ -250,6 +257,5 @@ function createApi(customFetch: Fetch = fetch) {
 	};
 }
 
-export type { HighlightWithMeta };
 export { createApi };
 export const api = createApi();

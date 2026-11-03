@@ -9,15 +9,31 @@
 	let highlighting = $state(false);
 	let imgNatW = $state(0);
 	let imgNatH = $state(0);
+	let ocrEl = $state<HTMLPreElement | null>(null);
 
 	function parseBboxes(json: string): {x:number,y:number,w:number,h:number}[] {
 		try { return JSON.parse(json) ?? []; } catch { return []; }
 	}
 
 	$effect(() => {
-		if (panel.id === null) { shot = null; highlights = []; return; }
+		if (panel.id === null) { shot = null; highlights = []; selectedText = ''; return; }
 		api.screenshots.get(panel.id).then(s => { shot = s; });
 		api.highlights.list(panel.id).then(h => { highlights = h; });
+	});
+
+	// A long-press selection on touch fires no mouseup, so the selection has to
+	// come from selectionchange for the button to ever appear on Android.
+	$effect(() => {
+		function onSelectionChange() {
+			const sel = window.getSelection();
+			const text = sel?.toString().trim() ?? '';
+			// Emptied selections are ignored: tapping the button collapses the
+			// selection on touch, which would unmount it before the click lands.
+			if (!text || !sel || !ocrEl || !ocrEl.contains(sel.anchorNode)) return;
+			selectedText = text;
+		}
+		document.addEventListener('selectionchange', onSelectionChange);
+		return () => document.removeEventListener('selectionchange', onSelectionChange);
 	});
 
 	async function save(field: 'ocr_corrected' | 'user_notes', value: string) {
@@ -25,11 +41,6 @@
 		saving = true;
 		await api.screenshots.update(shot.id, { [field]: value });
 		saving = false;
-	}
-
-	function handleMouseUp() {
-		const sel = window.getSelection();
-		selectedText = sel?.toString().trim() ?? '';
 	}
 
 	async function addHighlight() {
@@ -122,6 +133,7 @@
 					{#if selectedText}
 						<button
 							onclick={addHighlight}
+							onmousedown={(e) => e.preventDefault()}
 							disabled={highlighting}
 							style="font-size:11px;padding:.15rem .4rem;background:var(--active-bg)"
 						>
@@ -129,12 +141,7 @@
 						</button>
 					{/if}
 				</div>
-				<!-- svelte-ignore a11y-no-static-element-interactions -->
-				<pre
-					class="panel-ocr"
-					onmouseup={handleMouseUp}
-					style="cursor:text"
-				>{@html renderOcr(shot.ocr_text, highlights)}</pre>
+				<pre bind:this={ocrEl} class="panel-ocr" style="cursor:text">{@html renderOcr(shot.ocr_text, highlights)}</pre>
 
 				{#if highlights.length > 0}
 					<div style="margin-top:.5rem;display:flex;flex-direction:column;gap:.3rem">

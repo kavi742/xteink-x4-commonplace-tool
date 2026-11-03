@@ -66,7 +66,9 @@ app.include_router(api_router)
 # still works at home. This is what keeps the UI off the public internet while
 # only the (x-auth-protected) sync endpoints are exposed.
 _PUBLIC_SYNC_HOST = os.getenv("PUBLIC_SYNC_HOST", "").split(":")[0].lower()
-_PUBLIC_ALLOWED = ("/syncs", "/users", "/health")
+# Clipping sync runs against the same base URL as kosync, so its endpoint has to
+# be reachable publicly even though the rest of /api stays private.
+_PUBLIC_ALLOWED = ("/syncs", "/users", "/health", "/api/v1/clippings")
 
 
 @app.middleware("http")
@@ -157,6 +159,15 @@ def _device_override(
 
 
 DeviceOverride = Annotated[tuple[str, str], Depends(_device_override)]
+
+
+# Clipping sync speaks the same x-auth scheme as kosync; the UI half is read by
+# the browser on the private host and is not authenticated here.
+from xteink_service.clippings import sync_router as _clip_sync_router  # noqa: E402
+from xteink_service.clippings import ui_router as _clip_ui_router  # noqa: E402
+
+app.include_router(_clip_sync_router, dependencies=[Depends(_require_kosync_auth)])
+app.include_router(_clip_ui_router)
 
 
 # ------------------------------------------------------------------ #
@@ -692,6 +703,11 @@ if _web_build.exists():
         """Serve a real static file if one exists (robots.txt, etc.), else the
         SPA shell so client-side routes resolve on hard refresh."""
         if full_path:
+            # An unmatched API path must fail as JSON. Returning the SPA shell
+            # made CrossPoint's clipping probe read a 200 text/html body and
+            # report an incompatible server instead of a missing endpoint.
+            if full_path.startswith("api/"):
+                raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Not Found")
             candidate = (_web_root / full_path).resolve()
             # Guard against path traversal outside the build directory.
             if candidate.is_file() and candidate.is_relative_to(_web_root):

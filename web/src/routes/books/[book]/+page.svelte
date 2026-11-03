@@ -1,11 +1,30 @@
 <script lang="ts">
 	import DateGroup from '$lib/components/DateGroup.svelte';
 	import ReadingCalendar from '$lib/components/ReadingCalendar.svelte';
-	import type { Screenshot } from '$lib/api';
+	import ClippingCard from '$lib/components/ClippingCard.svelte';
+	import { api, type Screenshot, type Clipping, type HighlightWithMeta } from '$lib/api';
+	import { panel } from '$lib/panel.svelte';
 
 	let { data } = $props();
 	let { book, screenshots, calendar, readingStats } = $derived(data);
 	let filterQ = $state('');
+	let tab = $state<'screenshots' | 'highlights' | 'clippings'>('screenshots');
+
+	let highlights = $state<HighlightWithMeta[]>([]);
+	let clippings = $state<Clipping[]>([]);
+	// Kept in local state so a delete updates the list without a page reload.
+	$effect(() => { highlights = data.highlights; });
+	$effect(() => { clippings = data.clippings; });
+
+	async function removeHighlight(id: number) {
+		await api.highlights.delete(id);
+		highlights = highlights.filter(h => h.id !== id);
+	}
+
+	async function removeClipping(id: number) {
+		await api.clippings.delete(id);
+		clippings = clippings.filter(c => c.id !== id);
+	}
 
 	let grouped = $derived.by(() => {
 		const q = filterQ.toLowerCase().trim();
@@ -66,23 +85,78 @@
 	</section>
 {/if}
 
-<div style="margin-bottom:1rem">
-	<input
-		type="text"
-		bind:value={filterQ}
-		placeholder="Filter by OCR text or notes…"
-		style="font-size:13px"
-	/>
+<div class="tabs" role="tablist">
+	<button role="tab" aria-selected={tab === 'screenshots'} class:active={tab === 'screenshots'}
+		onclick={() => (tab = 'screenshots')}>Screenshots <span class="tab-n">{screenshots.length}</span></button>
+	<button role="tab" aria-selected={tab === 'highlights'} class:active={tab === 'highlights'}
+		onclick={() => (tab = 'highlights')}>Highlights <span class="tab-n">{highlights.length}</span></button>
+	<button role="tab" aria-selected={tab === 'clippings'} class:active={tab === 'clippings'}
+		onclick={() => (tab = 'clippings')}>Clippings <span class="tab-n">{clippings.length}</span></button>
 </div>
 
-{#if screenshots.length === 0}
-	<p class="empty">No screenshots for this book.</p>
-{:else if visibleCount === 0}
-	<p class="empty">No screenshots match "{filterQ}".</p>
+{#if tab === 'screenshots'}
+	<div style="margin-bottom:1rem">
+		<input
+			type="text"
+			bind:value={filterQ}
+			placeholder="Filter by OCR text or notes…"
+			style="font-size:13px"
+		/>
+	</div>
+
+	{#if screenshots.length === 0}
+		<p class="empty">No screenshots for this book.</p>
+	{:else if visibleCount === 0}
+		<p class="empty">No screenshots match "{filterQ}".</p>
+	{:else}
+		{#each grouped as [date, shots]}
+			<DateGroup {date} screenshots={shots} siblings={allIds} />
+		{/each}
+	{/if}
+{:else if tab === 'highlights'}
+	{#if highlights.length === 0}
+		<p class="empty">No highlights for this book. Open a screenshot and select text to highlight.</p>
+	{:else}
+		<div style="display:flex;flex-direction:column;gap:.5rem">
+			{#each highlights as h}
+				<div
+					class="highlight-entry"
+					onclick={() => panel.open(h.screenshot_id, highlights.map(x => x.screenshot_id))}
+					role="button"
+					tabindex="0"
+					onkeydown={(e) => e.key === 'Enter' && panel.open(h.screenshot_id, [])}
+				>
+					<div class="highlight-thumb">
+						{#if h.vault_png_path}
+							<img src={api.screenshots.imageUrl(h.screenshot_id)} alt="" loading="lazy" />
+						{/if}
+					</div>
+					<div class="highlight-body">
+						<mark class="highlight-text">{h.selected_text}</mark>
+						<p class="highlight-meta">{h.sync_date}</p>
+					</div>
+					<button
+						class="highlight-del"
+						onclick={(e) => { e.stopPropagation(); removeHighlight(h.id); }}
+						title="Remove"
+					>×</button>
+				</div>
+			{/each}
+		</div>
+	{/if}
 {:else}
-	{#each grouped as [date, shots]}
-		<DateGroup {date} screenshots={shots} siblings={allIds} />
-	{/each}
+	{#if clippings.length === 0}
+		<p class="empty">
+			No clippings for this book. Save an excerpt on the reader, then turn on
+			Settings &rsaquo; KOReader Sync &rsaquo; Sync Clippings and sync.
+		</p>
+	{:else}
+		<div style="display:flex;flex-direction:column;gap:.5rem">
+			{#each clippings as c}
+				<ClippingCard clipping={c} onDelete={() => removeClipping(c.id)} />
+			{/each}
+		</div>
+	{/if}
 {/if}
 
 <style>
@@ -91,4 +165,19 @@
 	.rs-num { font-size: 22px; font-weight: 700; color: var(--text); line-height: 1.15; }
 	.rs-sub { font-size: 14px; font-weight: 500; color: var(--text-muted); }
 	.rs-cap { font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .05em; }
+
+	.tabs { display: flex; gap: .25rem; border-bottom: 1px solid var(--border); margin-bottom: 1.25rem; }
+	.tabs button {
+		background: none;
+		border: none;
+		border-bottom: 2px solid transparent;
+		color: var(--text-muted);
+		font-size: 13px;
+		padding: .5rem .8rem;
+		cursor: pointer;
+		margin-bottom: -1px;
+	}
+	.tabs button:hover { color: var(--text); }
+	.tabs button.active { color: var(--text); border-bottom-color: var(--text); }
+	.tab-n { font-size: 11px; color: var(--text-muted); margin-left: .15rem; }
 </style>

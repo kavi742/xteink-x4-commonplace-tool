@@ -116,6 +116,31 @@ export interface HighlightWithMeta extends Highlight {
 	vault_png_path: string;
 }
 
+/** An excerpt saved on the device and synced through /api/v1/clippings. */
+export interface Clipping {
+	id: number;
+	revision: number;
+	document: string;
+	clip_id: string;
+	deleted: number;
+	spine: number;
+	start_page: number;
+	end_page: number;
+	pages: number;
+	start_word: number;
+	end_word: number;
+	words: number;
+	para: number | null;
+	chapter: string;
+	text: string;
+	created_at: number;
+	layout_signature: number;
+	start_offset: number | null;
+	end_offset: number | null;
+	synced_at: string;
+	book_title: string;
+}
+
 export interface SearchResult extends Screenshot {
 	match_fields: string[];
 	snippet: string;
@@ -201,6 +226,10 @@ function createApi(customFetch: Fetch = fetch) {
 				get<ReadingCalendarDay[]>(`/api/books/${encodeURIComponent(slug)}/reading-calendar`),
 			readingStats: (slug: string) =>
 				get<BookReadingStats>(`/api/books/${encodeURIComponent(slug)}/reading-stats`),
+			highlights: (slug: string) =>
+				get<HighlightWithMeta[]>(`/api/books/${encodeURIComponent(slug)}/highlights`),
+			clippings: (slug: string) =>
+				get<Clipping[]>(`/api/books/${encodeURIComponent(slug)}/clippings`),
 		},
 
 		screenshots: {
@@ -219,6 +248,11 @@ function createApi(customFetch: Fetch = fetch) {
 				post<Highlight>(`/api/screenshots/${screenshotId}/highlights`, { selected_text: selectedText }),
 			delete: (id: number) =>
 				del<{ deleted: number }>(`/api/highlights/${id}`),
+		},
+
+		clippings: {
+			listAll: (limit = 200) => get<Clipping[]>(`/api/clippings?limit=${limit}`),
+			delete: (id: number) => del<{ deleted: number }>(`/api/clippings/${id}`),
 		},
 
 		search: (q: string, limit = 50, notesOnly = false) => {

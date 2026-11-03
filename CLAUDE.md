@@ -5,6 +5,7 @@
 Homelab service (Python + Docker, Debian server) that:
 - **Screenshot archiving**: when X4 enters File Transfer mode, downloads all BMP screenshots, converts to PNG, OCRs with Tesseract, writes to Obsidian vault
 - **KOReader sync server**: receives reading progress from X4 via kosync protocol
+- **Clipping sync**: serves CrossPoint's `/api/v1/clippings` extension so excerpts saved on the reader land in the DB and web UI
 - **Page-count lookup**: on File Transfer, looks up each read book's page count (Open Library, with an epub word-count fallback) so reading percentages become page numbers
 - **Sync status**: logged server-side (`docker compose logs`); see the note below on why it is no longer shown on the device
 
@@ -26,6 +27,8 @@ Homelab service (Python + Docker, Debian server) that:
 - **Multi-device kosync** — the sync server is device-agnostic: any KOReader client (the X4, or a Kindle running KOReader + [kindle.koplugin](https://github.com/kaikozlov/kindle.koplugin)) can point at it. Clients are tracked in the `devices` table (keyed on the `device_id` KOReader sends) and exposed at `/api/devices`. The reading log / vault lines only name the device once a book has been read on more than one.
 - **Cross-device position sync is title-linked** — kosync only pairs devices whose `document` digest matches, and two devices holding different copies of a book never produce the same digest. `GET /syncs/progress/{doc}` therefore answers with the newest position across every hash whose alias resolves to the same `canonical_book_slug`. Mapping a hash to a title is what links two devices; `/api/aliases` marks those rows `linked`.
 - **Unmodelled payload fields are kept** — `ProgressIn` is `extra="allow"`; unknown keys go to `progress_updates.extra` as JSON and the first occurrence of each new shape is logged. This is how to see what a firmware update added (uvicorn access logs have no bodies).
+- **Clippings are a separate protocol from kosync** — `clippings.py` serves `GET/PUT /api/v1/clippings/{document}`, not extra fields on the progress payload. `revision` is a globally monotonic server-assigned counter that doubles as the pagination cursor; every write (including an update or a tombstone) takes a fresh revision so other devices notice it. Deletes are tombstones, never row removals, or the id would resurrect from the device on the next sync. Uploads are validated against the firmware's own decode limits (id 1–64 printable ASCII, text ≤ 4 KB, uint16/uint32 ranges) because an item the device cannot decode aborts its entire sync.
+- **Unknown `/api/*` paths must 404 as JSON** — the SPA catch-all used to answer 200 `text/html` for any unmatched path, so CrossPoint's clipping probe parsed the HTML shell, failed, and reported an incompatible server instead of a missing endpoint. `_spa_fallback` now excludes `api/`.
 - **Docker `--network host`** required so container inherits host's Tailscale and mDNS
 - **X4 fonts have no emoji** — all status messages must use plain ASCII
 
@@ -67,13 +70,15 @@ xteink_service/
   vault_writer.py    -- VaultWriter (write_screenshot, append_to_daily_note, etc.)
   state.py           -- SyncState (dedup + document_aliases tables)
   koreader_sync.py   -- FastAPI KOReader sync server
+  clippings.py       -- /api/v1/clippings sync protocol + UI endpoints
   document_id.py     -- CrossPoint partial-MD5 hash algorithm (from firmware source)
   hash_books.py      -- browses device books, computes hashes for alias resolution
   capture.py         -- single-shot test: download one screenshot + OCR
   sync_once.py       -- single sync cycle entry point
 tests/
   test_watcher.py, test_status_display.py, test_archiver.py,
-  test_vault_writer.py, test_state.py, test_koreader_sync.py, test_document_id.py
+  test_vault_writer.py, test_state.py, test_koreader_sync.py, test_document_id.py,
+  test_clippings.py
 test_scripts/
   test-phase{1-5}.sh, test-koreader.sh, test-document-hash.sh, capture-screenshot.sh
 ```
@@ -96,13 +101,16 @@ test_scripts/
 | 9 — Full data store + web UI | done | CRUD API + SvelteKit web UI at site root `/`; images served from the vault via `vault_png_path` (no DB blobs); OCR corrections, user notes, highlights, TBR, alias management |
 | 9b — Reading calendar + pages | done | Per-book reading calendar/heatmap; page counts (Open Library + epub estimate) surfaced as page numbers in the reading log, per-book stats (`/api/books/{slug}/reading-stats`), and calendar tooltips |
 | 10 — Integration | done | `main.py` + `__main__.py` run the watcher loop and KOReader server together; `python -m xteink_service` works |
+| 11 — Clipping sync | done | `clippings.py` serves `/api/v1/clippings/{doc}` (sync_version 2); `clippings` table in state.db; `/clippings` page plus Screenshots/Highlights/Clippings tabs on each book page |
 
 ---
 
 ## Known constraints
 
 - **"Send Metadata" exists on BOTH devices now** (was not true of older CrossPoint firmware). CrossPoint: Settings > System > KOReader Sync > Send Metadata (`koSendMetadata`, default off). KOReader: Menu > Tools > Progress sync > Send document metadata (default off). Both then add `metadata: {filename, title, authors}` to the kosync PUT — confirmed in `crosspoint-reader/lib/KOReaderSync/KOReaderSyncClient.cpp::updateProgress`. Turning it on is what removes hash-matching entirely; our server writes the title into `document_aliases` as `resolved_by='metadata'`.
-- **CrossPoint's rich `position` object never reaches us.** The firmware sends `position {pctQ, spine, page, pages, para, xpath}` — the "better progress indicators" — but only when `usesCrossPointSyncServer()`, i.e. `getBaseUrl() == https://sync.crosspointreader.com`. Self-hosted servers get the standard fields only. What we *do* benefit from is the improved `progress` XPath (content-offset anchored, so it survives different fonts/layouts).
+- **CrossPoint's rich `position` object is gated on the Server Type setting, not the hostname.** Older firmware keyed it to `sync.crosspointreader.com`; `KOReaderCredentialStore.h` now exposes `supportsRichProgress()` (`serverType != KOSYNC`) and `supportsExtendedMetadata()` (`serverType == OTHER`). Setting **Server Type = Other** on the device therefore sends us `position {pctQ, spine, page, pages, para, xpath}` plus `isbn`/`asin`/`series`/`series_index` in `metadata` — all captured by `progress_updates.extra` today. Note the device drops the whole `position` object if its xpath exceeds 120 bytes.
+- **No whole-book page number is ever synced.** The rich `position` carries `page`/`pages` but both are *within the current spine item* and are labelled layout-dependent hints in `KOReaderSyncClient.h` — they come from that device's pagination at its own font size, so two readers disagree. Clipping `start_page`/`end_page`/`pages` have the same per-chapter, per-layout meaning. `book_pages.py` inference stays necessary; `pctQ` (0..1,000,000) only makes the percentage side more precise.
+- **Clipping sync requires Server Type ≠ KOSync and Sync Clippings on** — Settings > KOReader Sync > Sync Clippings (`syncClippings`, default off). The device probes `GET /api/v1/clippings/{doc}?cursor=0&limit=1&format=reader` and aborts unless the JSON carries `sync_version: 2`. It then PUTs tombstones first, one pending clipping per request (expecting `accepted: 1`), and finally paginates everything back down. Its pagination validation is strict: at most `limit` items, a cursor that never moves backwards, a cursor that strictly advances whenever items are returned, and no `more: true` on an empty page.
 - **CrossPoint Smart Sync queries two digests.** `performSync()` fetches the primary match method's hash and the alternate one (FILENAME md5 vs BINARY partial-MD5), so a book can resolve under either.
 - **Binary document hashes are opaque** — the partial-MD5 algorithm is confirmed from firmware source: 12 offsets `[0, 1024, 4096, 16384, ...]`, 1024 bytes each. Existing books have Calibre-modified files so hashes don't match current on-disk files. Send Metadata is the way around this; manual mapping at `/aliases` is the fallback.
 - **KOReader sync `document` field is `md5(filename)`** — NOT the partial content hash. `alias.py --scan` resolves all unresolved hashes instantly from the device file listing alone (no downloads). Confirmed 2026-07-04.

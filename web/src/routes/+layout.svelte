@@ -29,6 +29,7 @@
 		{ href: '/log',        label: 'Reading Log' },
 		{ href: '/tbr',        label: 'TBR' },
 		{ href: '/highlights', label: 'Highlights' },
+		{ href: '/clippings',  label: 'Clippings' },
 		{ href: '/aliases',    label: 'Aliases' },
 	];
 

@@ -878,6 +878,29 @@ async def list_all_highlights(limit: int = 100):
         return []
 
 
+@router.get("/api/books/{slug}/highlights")
+async def list_book_highlights(slug: str):
+    """Highlights for a book, joined to the screenshot each was taken from."""
+    try:
+        with _state_conn() as conn:
+            titles = _book_titles_for_slug(conn, slug)
+            if not titles:
+                return []
+            ph = ",".join("?" for _ in titles)
+            rows = conn.execute(f'''
+                SELECT h.id, h.screenshot_id, h.selected_text,
+                       h.bbox_json, h.img_w, h.img_h, h.created_at,
+                       s.book_title, s.sync_date, s.vault_png_path
+                FROM highlights h
+                JOIN synced_screenshots s ON s.id = h.screenshot_id
+                WHERE s.book_title IN ({ph})
+                ORDER BY h.id DESC
+            ''', titles).fetchall()
+        return [dict(r) for r in rows]
+    except Exception:
+        return []
+
+
 @router.get("/api/search")
 async def search(q: str = "", limit: int = 50, notes_only: bool = False):
     """

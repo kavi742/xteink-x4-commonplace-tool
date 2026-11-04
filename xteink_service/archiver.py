@@ -15,6 +15,20 @@ from xteink_service.vault_writer import VaultWriter
 
 logger = logging.getLogger(__name__)
 
+_SHOT_POSITION_RE = re.compile(r'_ch(\d+)_p(\d+)')
+
+
+def parse_screenshot_filename(name: str) -> dict:
+    """
+    Extract chapter/page from a Crosspoint screenshot filename.
+    Example: Pastoral_ch8_p25_20pct_480360.bmp -> {chapter: 8, page: 25}
+    Both numbers are 1-based. Returns empty dict if the pattern doesn't match.
+    """
+    m = _SHOT_POSITION_RE.search(name)
+    if not m:
+        return {}
+    return {"chapter": int(m.group(1)), "page": int(m.group(2))}
+
 
 class ScreenshotArchiver:
     """Downloads screenshots from the X4 and writes them to the Obsidian vault."""
@@ -128,17 +142,7 @@ class ScreenshotArchiver:
     # Data fetching                                                        #
     # ------------------------------------------------------------------ #
 
-    @staticmethod
-    def _parse_filename(name: str) -> dict:
-        """
-        Extract chapter/page from a Crosspoint screenshot filename.
-        Example: Pastoral_ch8_p25_20pct_480360.bmp -> {chapter: 8, page: 25}
-        Returns empty dict if the pattern doesn't match.
-        """
-        m = re.search(r'_ch(\d+)_p(\d+)', name)
-        if not m:
-            return {}
-        return {"chapter": int(m.group(1)), "page": int(m.group(2))}
+    _parse_filename = staticmethod(parse_screenshot_filename)
 
     @staticmethod
     def _group_consecutive(screenshots, max_run: int = 6):

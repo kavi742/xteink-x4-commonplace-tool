@@ -139,6 +139,7 @@ export interface Clipping {
 	end_offset: number | null;
 	synced_at: string;
 	book_title: string;
+	screenshot_id: number | null;
 }
 
 export interface SearchResult extends Screenshot {

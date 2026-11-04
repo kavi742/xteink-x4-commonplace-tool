@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { Clipping } from '$lib/api';
+	import { panel } from '$lib/panel.svelte';
 
 	let {
 		clipping,
@@ -20,20 +21,43 @@
 			? `ch. page ${clipping.start_page + 1}`
 			: `ch. pages ${clipping.start_page + 1}–${clipping.end_page + 1}`
 	);
+
+	// screenshot_id wins over href: open the panel; otherwise fall back to the book link.
+	let screenshotId = $derived(clipping.screenshot_id);
+	let linked = $derived(screenshotId != null || !!href);
+
+	function openScreenshot() {
+		if (screenshotId != null) panel.open(screenshotId);
+	}
+	function onKey(e: KeyboardEvent) {
+		if (e.key === 'Enter' || e.key === ' ') {
+			e.preventDefault();
+			openScreenshot();
+		}
+	}
 </script>
 
 {#snippet body()}
+	{#if clipping.chapter}<p class="clip-chapter">{clipping.chapter}</p>{/if}
 	<blockquote class="clip-text">{clipping.text}</blockquote>
 	<p class="clip-meta">
-		{#if clipping.chapter}<span class="clip-chapter">{clipping.chapter}</span> · {/if}
 		{pageLabel} of {clipping.pages}
 		{#if clipping.words > 0} · {clipping.words} words{/if}
 		{#if savedOn} · {savedOn}{/if}
+		{#if screenshotId != null} · <span class="clip-shot">screenshot</span>{/if}
 	</p>
 {/snippet}
 
-<article class="clip" class:linked={!!href}>
-	{#if href}
+<article class="clip" class:linked>
+	{#if screenshotId != null}
+		<div
+			class="clip-link"
+			role="button"
+			tabindex="0"
+			onclick={openScreenshot}
+			onkeydown={onKey}
+		>{@render body()}</div>
+	{:else if href}
 		<a class="clip-link" {href}>{@render body()}</a>
 	{:else}
 		{@render body()}
@@ -52,7 +76,7 @@
 		padding: .75rem 2rem .6rem .9rem;
 	}
 	.clip.linked:hover { border-color: var(--text-muted); }
-	.clip-link { display: block; color: inherit; text-decoration: none; }
+	.clip-link { display: block; color: inherit; text-decoration: none; cursor: pointer; }
 	.clip-text {
 		margin: 0;
 		font-family: var(--font-serif);
@@ -63,7 +87,13 @@
 		padding-left: .75rem;
 	}
 	.clip-meta { font-size: 11px; color: var(--text-muted); margin: .5rem 0 0 .75rem; }
-	.clip-chapter { font-style: italic; }
+	.clip-chapter {
+		margin: 0 0 .4rem;
+		font-size: 13px;
+		font-weight: 600;
+		color: var(--text);
+	}
+	.clip-shot { text-decoration: underline; }
 	.clip-del {
 		position: absolute;
 		top: .4rem;

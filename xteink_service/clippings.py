@@ -28,6 +28,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, ConfigDict
 
 from xteink_service.booktitle import canonical_book_slug
+from xteink_service.clip_match import attach_screenshot_ids
 
 logger = logging.getLogger(__name__)
 
@@ -299,12 +300,16 @@ def _titles_by_hash() -> dict[str, str]:
 
 
 def _decorate(rows: list[sqlite3.Row]) -> list[dict]:
+    """Add the resolved book title and matching screenshot id to each clipping."""
     titles = _titles_by_hash()
     out = []
     for row in rows:
         clip = dict(row)
         clip["book_title"] = titles.get(row["document"], "")
         out.append(clip)
+    slugs = {h: canonical_book_slug(t) for h, t in titles.items()}
+    with _connect() as conn:
+        attach_screenshot_ids(conn, out, slugs)
     return out
 
 

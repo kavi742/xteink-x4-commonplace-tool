@@ -1,4 +1,5 @@
 import hashlib
+import json
 import logging
 import sqlite3
 
@@ -14,6 +15,74 @@ def _index(fn, conn: sqlite3.Connection, *args) -> None:
         fn(conn, *args)
     except sqlite3.OperationalError as exc:
         logger.warning("Search index update skipped: %s", exc)
+
+
+# ------------------------------------------------------------------ #
+# Citations                                                            #
+# ------------------------------------------------------------------ #
+# Deleting a passage must not gut the writing that quotes it. The entry body is
+# never touched; only the citing ref is flagged, so the reader can be told its
+# source is gone. `writing_refs` belongs to a later plan item and does not exist
+# yet, which is why every statement here swallows OperationalError.
+
+def mark_citations(conn: sqlite3.Connection, kind: str, ref_id: int) -> list[int]:
+    """Flag every live ref citing this passage as deleted. Returns the ids flagged."""
+    try:
+        ids = [
+            row[0] for row in conn.execute(
+                "SELECT id FROM writing_refs "
+                "WHERE kind = ? AND ref_id = ? AND source_state = 'live'",
+                (kind, ref_id),
+            )
+        ]
+        if ids:
+            conn.execute(
+                "UPDATE writing_refs SET source_state = 'deleted' "
+                "WHERE kind = ? AND ref_id = ? AND source_state = 'live'",
+                (kind, ref_id),
+            )
+        return ids
+    except sqlite3.OperationalError:
+        return []
+
+
+def deleted_citation_ids(conn: sqlite3.Connection, kind: str, ref_id: int) -> list[int]:
+    """Refs citing this passage that a delete flagged, for a restore with no payload."""
+    try:
+        return [
+            row[0] for row in conn.execute(
+                "SELECT id FROM writing_refs "
+                "WHERE kind = ? AND ref_id = ? AND source_state = 'deleted'",
+                (kind, ref_id),
+            )
+        ]
+    except sqlite3.OperationalError:
+        return []
+
+
+def restore_citations(conn: sqlite3.Connection, ref_ids: list[int]) -> int:
+    """Return the named refs to live. A ref marked 'drifted' elsewhere is left alone."""
+    ids = [int(i) for i in (ref_ids or [])]
+    if not ids:
+        return 0
+    try:
+        cur = conn.execute(
+            "UPDATE writing_refs SET source_state = 'live' "
+            "WHERE id IN (SELECT value FROM json_each(?)) AND source_state = 'deleted'",
+            (json.dumps(ids),),
+        )
+        return cur.rowcount
+    except sqlite3.OperationalError:
+        return 0
+
+
+def citation_clause(ref_count: int) -> str:
+    """The toast sentence telling the user the writing kept this passage's words."""
+    if ref_count <= 0:
+        return ""
+    noun = "citation" if ref_count == 1 else "citations"
+    verb = "keeps" if ref_count == 1 else "keep"
+    return f" {ref_count} {noun} {verb} its text."
 
 
 def _backfill_alias_kinds(conn: sqlite3.Connection) -> None:
@@ -71,6 +140,7 @@ class SyncState:
                     img_w          INTEGER DEFAULT 0,
                     img_h          INTEGER DEFAULT 0,
                     created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    deleted_at     TIMESTAMP,
                     FOREIGN KEY(screenshot_id) REFERENCES synced_screenshots(id)
                 )
             """)
@@ -95,8 +165,23 @@ class SyncState:
             ]:
                 try:
                     conn.execute(f"ALTER TABLE synced_screenshots ADD COLUMN {col} {typedef}")
-                except Exception:
+                except sqlite3.OperationalError:
                     pass  # column already exists
+            for col, typedef in [
+                ("deleted_at", "TIMESTAMP"),
+            ]:
+                try:
+                    conn.execute(f"ALTER TABLE highlights ADD COLUMN {col} {typedef}")
+                except sqlite3.OperationalError:
+                    pass  # column already exists
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_highlights_shot_live "
+                "ON highlights (screenshot_id) WHERE deleted_at IS NULL"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_highlights_deleted "
+                "ON highlights (deleted_at) WHERE deleted_at IS NOT NULL"
+            )
             # document_aliases populated in Phase 6b
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS document_aliases (
@@ -322,13 +407,59 @@ class SyncState:
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
-                "SELECT * FROM highlights WHERE screenshot_id = ? ORDER BY id",
+                "SELECT * FROM highlights WHERE screenshot_id = ? AND deleted_at IS NULL "
+                "ORDER BY id",
                 (screenshot_id,),
             ).fetchall()
         return [dict(r) for r in rows]
 
-    def delete_highlight(self, highlight_id: int) -> bool:
+    def get_highlight(self, highlight_id: int) -> dict | None:
+        """One highlight joined to the screenshot that names its book."""
         with sqlite3.connect(self.db_path) as conn:
-            cur = conn.execute("DELETE FROM highlights WHERE id = ?", (highlight_id,))
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT h.*, s.book_title, s.vault_root, s.sync_date "
+                "FROM highlights h JOIN synced_screenshots s ON s.id = h.screenshot_id "
+                "WHERE h.id = ?",
+                (highlight_id,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def delete_highlight(self, highlight_id: int) -> bool:
+        """Soft delete. False when the row is missing or already in the trash."""
+        with sqlite3.connect(self.db_path) as conn:
+            cur = conn.execute(
+                "UPDATE highlights SET deleted_at = CURRENT_TIMESTAMP "
+                "WHERE id = ? AND deleted_at IS NULL",
+                (highlight_id,),
+            )
             _index(search_index.unindex, conn, "highlight", highlight_id)
         return cur.rowcount > 0
+
+    def purge_highlight(self, highlight_id: int) -> bool:
+        """Hard delete, but only from the trash: a live highlight is never purgeable."""
+        with sqlite3.connect(self.db_path) as conn:
+            cur = conn.execute(
+                "DELETE FROM highlights WHERE id = ? AND deleted_at IS NOT NULL",
+                (highlight_id,),
+            )
+        return cur.rowcount > 0
+
+    def purge_trashed_highlights(self) -> int:
+        with sqlite3.connect(self.db_path) as conn:
+            cur = conn.execute("DELETE FROM highlights WHERE deleted_at IS NOT NULL")
+        return cur.rowcount
+
+    def list_trashed_highlights(self) -> list[dict]:
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT h.id, h.screenshot_id, h.selected_text, h.deleted_at, "
+                "       COALESCE(s.book_title, '') AS book_title, "
+                "       COALESCE(s.sync_date, '') AS sync_date "
+                "FROM highlights h "
+                "LEFT JOIN synced_screenshots s ON s.id = h.screenshot_id "
+                "WHERE h.deleted_at IS NOT NULL "
+                "ORDER BY h.deleted_at DESC, h.id DESC"
+            ).fetchall()
+        return [dict(r) for r in rows]

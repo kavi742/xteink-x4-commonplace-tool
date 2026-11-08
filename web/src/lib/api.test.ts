@@ -169,3 +169,93 @@ describe('api.aliases.set', () => {
 		);
 	});
 });
+
+// ------------------------------------------------------------------ //
+// /api/trash and /api/undo                                             //
+// ------------------------------------------------------------------ //
+
+describe('api.trash', () => {
+	it('GET /api/trash', async () => {
+		const stub = {
+			counts: { highlights: 0, clippings: 0, writing: 0 },
+			highlights: [],
+			clippings: [],
+			writing: [],
+		};
+		const spy = mockFetch(stub);
+
+		const result = await api.trash.get();
+
+		expect(spy).toHaveBeenCalledWith('/api/trash');
+		expect(result.counts.writing).toBe(0);
+	});
+
+	it('every purge wrapper appends confirm=1', async () => {
+		const highlight = mockFetch({ purged: 41, row_retained: false, undo_token: null });
+		await api.trash.purgeHighlight(41);
+		expect(highlight).toHaveBeenCalledWith(
+			'/api/trash/highlights/41?confirm=1',
+			expect.objectContaining({ method: 'DELETE' }),
+		);
+
+		const clipping = mockFetch({ purged: 184, row_retained: true, undo_token: null });
+		await api.trash.purgeClipping(184);
+		expect(clipping).toHaveBeenCalledWith(
+			'/api/trash/clippings/184?confirm=1',
+			expect.objectContaining({ method: 'DELETE' }),
+		);
+
+		const empty = mockFetch({ purged: {}, rows_retained: 0 });
+		await api.trash.empty();
+		expect(empty).toHaveBeenCalledWith(
+			'/api/trash/empty?confirm=1',
+			expect.objectContaining({ method: 'POST' }),
+		);
+	});
+
+	it('POSTs the two restore routes', async () => {
+		const highlight = mockFetch({ id: 41 });
+		await api.trash.restoreHighlight(41);
+		expect(highlight).toHaveBeenCalledWith(
+			'/api/highlights/41/restore',
+			expect.objectContaining({ method: 'POST' }),
+		);
+
+		const clipping = mockFetch({ restored: 184, revision: 914 });
+		await api.trash.restoreClipping(184);
+		expect(clipping).toHaveBeenCalledWith(
+			'/api/clippings/184/restore',
+			expect.objectContaining({ method: 'POST' }),
+		);
+	});
+});
+
+describe('api.undo', () => {
+	it('POST /api/undo with the token in the body', async () => {
+		const spy = mockFetch({
+			ok: true,
+			already_undone: false,
+			kind: 'clipping_delete',
+			label: '',
+			result: {},
+		});
+
+		await api.undo.run('7f3a1c9b');
+
+		expect(spy).toHaveBeenCalledWith(
+			'/api/undo',
+			expect.objectContaining({
+				method: 'POST',
+				body: JSON.stringify({ token: '7f3a1c9b' }),
+			}),
+		);
+	});
+
+	it('GET /api/undo/recent?limit=5', async () => {
+		const spy = mockFetch({ items: [] });
+
+		await api.undo.recent(5);
+
+		expect(spy).toHaveBeenCalledWith('/api/undo/recent?limit=5');
+	});
+});

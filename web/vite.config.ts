@@ -24,6 +24,9 @@ export default defineConfig(({ mode }) => ({
 			'/syncs': 'http://localhost:8090',
 		}
 	},
+	// Component tests mount Svelte client-side, which needs the `browser` export
+	// condition; without it svelte resolves to its server build and mount() throws.
+	...(mode === 'test' ? { resolve: { conditions: ['browser'] } } : {}),
 	test: {
 		environment: 'jsdom',
 		setupFiles: ['./src/test/setup.ts'],

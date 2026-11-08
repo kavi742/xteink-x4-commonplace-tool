@@ -55,6 +55,48 @@ class VaultWriter:
         logger.debug("Wrote %s", book_dir / filename)
         return f"{book_slug}/{filename}"
 
+    # ------------------------------------------------------------------ #
+    # Highlight marks                                                      #
+    # ------------------------------------------------------------------ #
+    # Symmetric by construction: the mark is a literal substring replace, so a
+    # passage that never matched was never marked and the unmark finds nothing
+    # to do. Both are non-fatal; a vault write failure must not fail the API.
+
+    def _note_path(self, book_title: str, root: str) -> Path:
+        return self.vault_path / root / f"{_sanitize(book_title)}.md"
+
+    def mark_highlight(self, book_title: str, selected_text: str, root: str = "Books") -> bool:
+        """Wrap the first unmarked occurrence in ==…==. True if the note changed."""
+        if not book_title or not selected_text:
+            return False
+        marked = f"=={selected_text}=="
+        try:
+            note = self._note_path(book_title, root)
+            content = note.read_text()
+            if marked in content or selected_text not in content:
+                return False
+            note.write_text(content.replace(selected_text, marked, 1))
+            return True
+        except OSError as exc:
+            logger.warning("Vault highlight mark failed: %s", exc)
+            return False
+
+    def unmark_highlight(self, book_title: str, selected_text: str, root: str = "Books") -> bool:
+        """Strip the first ==…== around this passage. True if the note changed."""
+        if not book_title or not selected_text:
+            return False
+        marked = f"=={selected_text}=="
+        try:
+            note = self._note_path(book_title, root)
+            content = note.read_text()
+            if marked not in content:
+                return False
+            note.write_text(content.replace(marked, selected_text, 1))
+            return True
+        except OSError as exc:
+            logger.warning("Vault highlight unmark failed: %s", exc)
+            return False
+
     def write_screenshot_meta(
         self,
         embed_path: str,

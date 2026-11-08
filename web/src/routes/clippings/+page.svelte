@@ -1,12 +1,16 @@
 <script lang="ts">
 	import { api } from '$lib/api';
 	import ClippingCard from '$lib/components/ClippingCard.svelte';
+	import { undo } from '$lib/undo.svelte';
 	import type { Clipping } from '$lib/api';
 
 	type Group = { title: string; mapped: boolean; kind: 'book' | 'article'; items: Clipping[] };
 
 	let { data } = $props();
 	let clippings = $state<Clipping[]>(data.clippings);
+	// Kept in local state so a delete updates the list without a page reload,
+	// and resynced so an undo elsewhere in the app is reflected here.
+	$effect(() => { clippings = data.clippings; });
 
 	let grouped = $derived.by(() => {
 		const map = new Map<string, Group>();
@@ -29,8 +33,9 @@
 	}
 
 	async function remove(id: number) {
-		await api.clippings.delete(id);
+		const res = await api.clippings.delete(id);
 		clippings = clippings.filter(c => c.id !== id);
+		undo.offerToken(res.undo_token);
 	}
 </script>
 

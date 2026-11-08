@@ -45,7 +45,7 @@ def _item(clip_id: str, text: str = "A sentence worth keeping.", **over) -> dict
 def clean_table():
     yield
     with sqlite3.connect(_state_db()) as conn:
-        for table in ("clippings", "document_aliases"):
+        for table in ("clippings", "document_aliases", "undo_log"):
             try:
                 conn.execute(f"DELETE FROM {table}")
             except sqlite3.OperationalError:
@@ -176,6 +176,40 @@ def test_ui_list_and_delete():
     # Deleting from the UI must still reach the device as a tombstone.
     synced = client.get(URL, params={"cursor": 0, "limit": 10}).json()
     assert synced["items"][0]["deleted"] == 1
+
+
+def test_a_tombstone_never_widens_the_wire_shape():
+    """New trash columns must stay server-side; the device parses this strictly."""
+    client.put(URL, json={"items": [_item("clip-1")]})
+    client.put(URL, json={"items": [{"id": "clip-1", "deleted": 1}]})
+    item = client.get(URL, params={"cursor": 0, "limit": 10}).json()["items"][0]
+    assert set(item) == {"id", "deleted", "revision"}
+
+
+def test_a_device_tombstone_keeps_the_body_for_restore():
+    client.put(URL, json={"items": [_item("clip-1", text="Excerpt to keep")]})
+    client.put(URL, json={"items": [{"id": "clip-1", "deleted": 1}]})
+    with sqlite3.connect(_state_db()) as conn:
+        text, trashed = conn.execute(
+            "SELECT text, trashed_text FROM clippings WHERE clip_id = 'clip-1'"
+        ).fetchone()
+    assert (text, trashed) == ("", "Excerpt to keep")
+
+
+def test_restore_sends_the_clipping_back_to_the_device():
+    client.put(URL, json={"items": [_item("clip-1")]})
+    listed = client.get("/api/clippings").json()
+    clipping_id = listed[0]["id"]
+    deleted = client.delete(f"/api/clippings/{clipping_id}").json()
+
+    restored = client.post(f"/api/clippings/{clipping_id}/restore").json()
+    assert restored["revision"] > deleted["revision"]
+
+    # Above the cursor the device last held, so it downloads the row again.
+    body = client.get(URL, params={"cursor": deleted["revision"], "limit": 10}).json()
+    assert len(body["items"]) == 1
+    assert body["items"][0]["deleted"] == 0
+    assert body["items"][0]["text"] == "A sentence worth keeping."
 
 
 # ------------------------------------------------------------------ #

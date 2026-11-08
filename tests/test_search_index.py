@@ -31,7 +31,8 @@ _SOURCE_TABLES = (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         screenshot_id INTEGER NOT NULL, selected_text TEXT NOT NULL,
         bbox_json TEXT DEFAULT '[]', img_w INTEGER DEFAULT 0, img_h INTEGER DEFAULT 0,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        deleted_at TIMESTAMP
     )
     """,
     """

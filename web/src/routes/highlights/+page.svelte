@@ -1,10 +1,14 @@
 <script lang="ts">
 	import { api } from '$lib/api';
 	import { panel } from '$lib/panel.svelte';
+	import { undo } from '$lib/undo.svelte';
 	import type { HighlightWithMeta } from '$lib/api';
 
 	let { data } = $props();
 	let highlights = $state<HighlightWithMeta[]>(data.highlights);
+	// Kept in local state so a delete updates the list without a page reload,
+	// and resynced so an undo elsewhere in the app is reflected here.
+	$effect(() => { highlights = data.highlights; });
 
 	// Group by book
 	let grouped = $derived.by(() => {
@@ -18,8 +22,9 @@
 	});
 
 	async function remove(id: number) {
-		await api.highlights.delete(id);
+		const res = await api.highlights.delete(id);
 		highlights = highlights.filter(h => h.id !== id);
+		undo.offerToken(res.undo_token);
 	}
 </script>
 

@@ -27,7 +27,7 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
 
-from xteink_service import logbuffer, search_index
+from xteink_service import logbuffer, search_index, undo
 from xteink_service.booktitle import canonical_book_slug
 from xteink_service.content_kind import (
     ARTICLE,
@@ -37,6 +37,14 @@ from xteink_service.content_kind import (
     kind_for_vault_root,
     kinds_by_hash,
 )
+from xteink_service.state import (
+    SyncState,
+    citation_clause,
+    deleted_citation_ids,
+    mark_citations,
+    restore_citations,
+)
+from xteink_service.vault_writer import VaultWriter
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -1115,6 +1123,7 @@ async def list_all_highlights(limit: int = 100):
                        s.book_title, s.sync_date, s.vault_png_path
                 FROM highlights h
                 JOIN synced_screenshots s ON s.id = h.screenshot_id
+                WHERE h.deleted_at IS NULL
                 ORDER BY h.id DESC LIMIT ?
             ''', (limit,)).fetchall()
         return [dict(r) for r in rows]
@@ -1137,7 +1146,7 @@ async def list_book_highlights(slug: str):
                        s.book_title, s.sync_date, s.vault_png_path
                 FROM highlights h
                 JOIN synced_screenshots s ON s.id = h.screenshot_id
-                WHERE s.book_title IN ({ph})
+                WHERE s.book_title IN ({ph}) AND h.deleted_at IS NULL
                 ORDER BY h.id DESC
             ''', titles).fetchall()
         return [dict(r) for r in rows]
@@ -1179,7 +1188,6 @@ async def reindex_search():
 async def list_highlights(screenshot_id: int):
     """Return all highlights for a screenshot."""
     try:
-        from xteink_service.state import SyncState
         state = SyncState(_state_db())
         return state.list_highlights(screenshot_id)
     except Exception as exc:
@@ -1192,7 +1200,6 @@ async def create_highlight(screenshot_id: int, body: HighlightIn):
     Save a text highlight for a screenshot and write ==text== into the Obsidian
     book note so the passage appears highlighted in Obsidian.
     """
-    from xteink_service.state import SyncState
     state = SyncState(_state_db())
 
     # Verify screenshot exists and get metadata
@@ -1218,38 +1225,256 @@ async def create_highlight(screenshot_id: int, body: HighlightIn):
     )
     logger.info("Highlight created: screenshot %d — %.40s", screenshot_id, body.selected_text)
 
-    # Write ==text== into the vault book note
-    vault = _vault_path()
-    if vault.exists() and shot.get("book_title") and shot.get("vault_png_path"):
-        try:
-            from xteink_service.vault_writer import VaultWriter, _sanitize
-            book_slug = _sanitize(shot["book_title"])
-            note_path = vault / vault_root / f"{book_slug}.md"
-            if note_path.exists():
-                content = note_path.read_text()
-                # Wrap the selected text with == == (Obsidian highlight syntax)
-                # Only replace the first unformatted occurrence to avoid double-marking
-                marked = f"=={body.selected_text}=="
-                if marked not in content and body.selected_text in content:
-                    content = content.replace(body.selected_text, marked, 1)
-                    note_path.write_text(content)
-        except Exception as exc:
-            # Vault write failure is non-fatal — DB record is still saved
-            import logging
-            logging.getLogger(__name__).warning("Vault highlight write failed: %s", exc)
-
+    VaultWriter(str(_vault_path())).mark_highlight(
+        shot.get("book_title", ""), body.selected_text, root=vault_root
+    )
     return highlight
+
+
+def _highlight_label(ref_count: int) -> str:
+    return "Deleted 1 highlight" + citation_clause(ref_count)
+
+
+def _restore_highlight(conn: sqlite3.Connection, highlight_id: int) -> dict | None:
+    """Take one highlight out of the trash on an open transaction."""
+    cur = conn.execute(
+        "UPDATE highlights SET deleted_at = NULL WHERE id = ? AND deleted_at IS NOT NULL",
+        (highlight_id,),
+    )
+    if cur.rowcount == 0:
+        return None
+    try:
+        search_index.index_highlight(conn, highlight_id)
+    except sqlite3.OperationalError as exc:
+        logger.warning("Search index update skipped: %s", exc)
+    row = conn.execute("SELECT * FROM highlights WHERE id = ?", (highlight_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def _remark_vault(conn: sqlite3.Connection, screenshot_id: int, selected_text: str) -> bool:
+    shot = conn.execute(
+        "SELECT * FROM synced_screenshots WHERE id = ?", (screenshot_id,)
+    ).fetchone()
+    if shot is None:
+        return False
+    return VaultWriter(str(_vault_path())).mark_highlight(
+        dict(shot).get("book_title", ""), selected_text, root=_vault_root_of(shot)
+    )
 
 
 @router.delete("/api/highlights/{highlight_id}")
 async def delete_highlight(highlight_id: int):
-    """Remove a highlight. Does not un-mark the Obsidian note."""
-    from xteink_service.state import SyncState
+    """Move a highlight to the trash and strip its ==…== mark from the vault note."""
     state = SyncState(_state_db())
-    if not state.delete_highlight(highlight_id):
+    row = state.get_highlight(highlight_id)
+    if row is None or not state.delete_highlight(highlight_id):
         raise HTTPException(status_code=404, detail="Highlight not found")
+    unmarked = VaultWriter(str(_vault_path())).unmark_highlight(
+        row.get("book_title", ""), row["selected_text"], root=_vault_root_of(row)
+    )
+    with _state_conn() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        refs = mark_citations(conn, "highlight", highlight_id)
+    token = undo.record(
+        "highlight_delete",
+        _highlight_label(len(refs)),
+        {
+            "highlight_id": highlight_id,
+            "screenshot_id": row["screenshot_id"],
+            "book_title": row.get("book_title", ""),
+            "selected_text": row["selected_text"],
+            "unmarked_vault": unmarked,
+            "writing_refs": refs,
+        },
+    )
     logger.info("Highlight deleted: %d", highlight_id)
-    return {"deleted": highlight_id}
+    return {
+        "deleted": highlight_id, "soft": True, "unmarked_vault": unmarked,
+        "writing_refs_marked": len(refs), "undo_token": token,
+    }
+
+
+@router.post("/api/highlights/{highlight_id}/restore")
+async def restore_highlight(highlight_id: int):
+    """Bring a trashed highlight back, mark and all."""
+    SyncState(_state_db())
+    with _state_conn() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        row = _restore_highlight(conn, highlight_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="Highlight not in the trash")
+        _remark_vault(conn, row["screenshot_id"], row["selected_text"])
+        restore_citations(conn, deleted_citation_ids(conn, "highlight", highlight_id))
+    return row
+
+
+@undo.register("highlight_delete")
+def _undo_highlight_delete(conn: sqlite3.Connection, payload: dict) -> dict:
+    highlight_id = int(payload.get("highlight_id", 0))
+    row = _restore_highlight(conn, highlight_id)
+    if row is None:
+        return {
+            "restored": [], "skipped": [highlight_id],
+            "writing_refs_restored": 0, "marked_vault": False,
+        }
+    # Putting the mark back is the half of the undo the user sees in Obsidian.
+    marked = _remark_vault(conn, row["screenshot_id"], row["selected_text"])
+    return {
+        "restored": [highlight_id], "skipped": [],
+        "writing_refs_restored": restore_citations(conn, payload.get("writing_refs", [])),
+        "marked_vault": marked,
+    }
+
+
+# ------------------------------------------------------------------ #
+# Trash and undo                                                       #
+# ------------------------------------------------------------------ #
+
+_PURGE_GATE = "Pass confirm=1 to purge permanently"
+# A purged clipping keeps its tombstone row: the device resurrects any id it
+# still holds, so removing the row makes the deletion look silently undone.
+_TOMBSTONE_REASON = "tombstone kept so the device does not resurrect the id"
+
+
+def _excerpt(text: str, limit: int = 160) -> str:
+    """First `limit` characters, trimmed on a word boundary."""
+    flat = " ".join((text or "").split())
+    if len(flat) <= limit:
+        return flat
+    cut = flat[:limit]
+    space = cut.rfind(" ")
+    return (cut[:space] if space > 0 else cut) + "..."
+
+
+def _trashed_writing(conn: sqlite3.Connection) -> list[dict]:
+    """The writing bucket. Empty until the writing log lands; never a 500."""
+    try:
+        entries = conn.execute(
+            "SELECT id, book_slug, entry_date, title, body, deleted_at "
+            "FROM writing_entries WHERE deleted_at IS NOT NULL "
+            "ORDER BY deleted_at DESC, id DESC"
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return []
+    snapshots: dict[int, dict[int, str]] = {}
+    counts: dict[int, int] = {}
+    try:
+        for entry_id, ref_id, snapshot in conn.execute(
+            "SELECT entry_id, id, snapshot FROM writing_refs"
+        ):
+            snapshots.setdefault(entry_id, {})[ref_id] = snapshot or ""
+            counts[entry_id] = counts.get(entry_id, 0) + 1
+    except sqlite3.OperationalError:
+        pass
+    titles = {}
+    try:
+        titles = {canonical_book_slug(t): t for (t,) in conn.execute(
+            "SELECT DISTINCT book_title FROM synced_screenshots "
+            "WHERE COALESCE(book_title, '') != ''"
+        )}
+    except sqlite3.OperationalError:
+        pass
+    return [{
+        "id": row["id"],
+        "book_title": titles.get(row["book_slug"] or "", ""),
+        "book_slug": row["book_slug"] or "",
+        "title": row["title"],
+        "entry_date": row["entry_date"],
+        "excerpt": _excerpt(
+            search_index.expand_anchors(row["body"] or "", snapshots.get(row["id"], {}))
+        ),
+        "ref_count": counts.get(row["id"], 0),
+        "deleted_at": row["deleted_at"],
+        "restorable": True,
+    } for row in entries]
+
+
+@router.get("/api/trash")
+async def trash():
+    """Everything recoverable, in named buckets so new kinds are not a breaking change."""
+    from xteink_service import clippings as clippings_mod
+    state = SyncState(_state_db())
+    highlights = state.list_trashed_highlights()
+    clips = clippings_mod.list_trashed_clippings()
+    with _state_conn() as conn:
+        writing = _trashed_writing(conn)
+    return {
+        "counts": {
+            "highlights": len(highlights),
+            "clippings": len(clips),
+            "writing": len(writing),
+        },
+        "highlights": highlights,
+        "clippings": clips,
+        "writing": writing,
+    }
+
+
+@router.delete("/api/trash/highlights/{highlight_id}")
+async def purge_trashed_highlight(highlight_id: int, confirm: int = 0):
+    if confirm != 1:
+        raise HTTPException(status_code=400, detail=_PURGE_GATE)
+    if not SyncState(_state_db()).purge_highlight(highlight_id):
+        raise HTTPException(status_code=404, detail="Highlight not in the trash")
+    logger.info("Highlight purged: %d", highlight_id)
+    return {"purged": highlight_id, "row_retained": False, "undo_token": None}
+
+
+@router.delete("/api/trash/clippings/{clipping_id}")
+async def purge_trashed_clipping(clipping_id: int, confirm: int = 0):
+    if confirm != 1:
+        raise HTTPException(status_code=400, detail=_PURGE_GATE)
+    from xteink_service import clippings as clippings_mod
+    if not clippings_mod.purge_clipping(clipping_id):
+        raise HTTPException(status_code=404, detail="Clipping not in the trash")
+    logger.info("Clipping purged: %d", clipping_id)
+    return {
+        "purged": clipping_id, "row_retained": True,
+        "undo_token": None, "reason": _TOMBSTONE_REASON,
+    }
+
+
+@router.post("/api/trash/empty")
+async def empty_trash(confirm: int = 0):
+    if confirm != 1:
+        raise HTTPException(status_code=400, detail=_PURGE_GATE)
+    from xteink_service import clippings as clippings_mod
+    purged = {
+        "highlights": SyncState(_state_db()).purge_trashed_highlights(),
+        "clippings": clippings_mod.purge_trashed_clippings(),
+        "writing": 0,
+    }
+    logger.info("Trash emptied: %s", purged)
+    return {"purged": purged, "rows_retained": purged["clippings"], "undo_token": None}
+
+
+class UndoIn(BaseModel):
+    token: str
+
+
+@router.post("/api/undo")
+async def run_undo(body: UndoIn):
+    """Reverse one logged action. Calling twice is safe and reverses nothing twice."""
+    from xteink_service import clippings  # noqa: F401  (registers clipping_delete)
+    try:
+        return undo.apply(body.token)
+    except undo.UnknownToken:
+        raise HTTPException(status_code=404, detail="Unknown undo token")
+    except undo.ExpiredToken:
+        raise HTTPException(
+            status_code=410,
+            detail="This undo expired. Restore the item from /trash instead.",
+        )
+    except undo.UnregisteredKind as exc:
+        raise HTTPException(
+            status_code=409, detail=f"No reversal is registered for kind '{exc.kind}'"
+        )
+
+
+@router.get("/api/undo/recent")
+async def list_recent_undo(limit: int = Query(default=5, ge=1, le=20)):
+    """Still-actionable undo entries, so a toast survives a reload."""
+    return {"items": undo.recent(limit)}
 
 
 # ------------------------------------------------------------------ #

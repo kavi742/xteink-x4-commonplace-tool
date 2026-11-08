@@ -27,10 +27,16 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, ConfigDict
 
-from xteink_service import search_index
+from xteink_service import search_index, undo
 from xteink_service.booktitle import canonical_book_slug
 from xteink_service.clip_match import attach_screenshot_ids
 from xteink_service.content_kind import ARTICLES_SLUG, alias_rows
+from xteink_service.state import (
+    citation_clause,
+    deleted_citation_ids,
+    mark_citations,
+    restore_citations,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -80,13 +86,32 @@ def init_db() -> None:
                 start_offset     INTEGER,
                 end_offset       INTEGER,
                 synced_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                deleted_at       TIMESTAMP,
+                deleted_source   TEXT    NOT NULL DEFAULT '',
+                trashed_text     TEXT    NOT NULL DEFAULT '',
                 UNIQUE(document, clip_id)
             )
         """)
+        # A tombstone clears `text` so a deleted clipping is never paginated back
+        # down. `trashed_text` is the only reason a restore is possible at all.
+        for col, typedef in [
+            ("deleted_at", "TIMESTAMP"),
+            ("deleted_source", "TEXT NOT NULL DEFAULT ''"),
+            ("trashed_text", "TEXT NOT NULL DEFAULT ''"),
+        ]:
+            try:
+                conn.execute(f"ALTER TABLE clippings ADD COLUMN {col} {typedef}")
+            except sqlite3.OperationalError:
+                pass  # column already exists
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_clippings_doc_rev "
             "ON clippings (document, revision)"
         )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_clippings_trash "
+            "ON clippings (deleted_at) WHERE deleted = 1"
+        )
+        undo.init_db(conn)
         search_index.init_db(conn)
 
 
@@ -165,19 +190,46 @@ def _next_revision(conn: sqlite3.Connection) -> int:
     return int(row[0])
 
 
-def _apply(conn: sqlite3.Connection, document: str, item: ClippingItem) -> None:
+def delete_label(source: str, count: int, ref_count: int) -> str:
+    """The whole toast line. The device wording differs because undoing it talks
+    back to the reader, which is a change the user is making to another device."""
+    noun = "clipping" if count == 1 else "clippings"
+    if source == "device":
+        line = f"The reader deleted {count} {noun}. Undo sends it back at the next sync."
+    else:
+        line = f"Deleted {count} {noun}"
+    return line + citation_clause(ref_count)
+
+
+def _apply(conn: sqlite3.Connection, document: str, item: ClippingItem) -> dict | None:
+    """Write one uploaded item. Returns the entry to log when a live clipping dies."""
     revision = _next_revision(conn)
+    prior = conn.execute(
+        "SELECT id, deleted FROM clippings WHERE document = ? AND clip_id = ?",
+        (document, item.id),
+    ).fetchone()
     if item.deleted == 1:
         # Tombstones keep the row so the id still paginates out to other devices.
+        # `clippings.text` on the right-hand side is still the pre-update value,
+        # which is the one chance to save the body before it is cleared.
         conn.execute(
-            """INSERT INTO clippings (revision, document, clip_id, deleted, text)
-                    VALUES (?,?,?,1,'')
+            """INSERT INTO clippings (revision, document, clip_id, deleted, text,
+                                      deleted_at, deleted_source, trashed_text)
+                    VALUES (?,?,?,1,'',CURRENT_TIMESTAMP,'device','')
                ON CONFLICT(document, clip_id) DO UPDATE SET
-                    revision = excluded.revision, deleted = 1, text = ''""",
+                    revision = excluded.revision, deleted = 1,
+                    trashed_text = COALESCE(NULLIF(clippings.text, ''), clippings.trashed_text),
+                    text = '', deleted_at = CURRENT_TIMESTAMP, deleted_source = 'device'""",
             (revision, document, item.id),
         )
         _reindex(conn, document, item.id, live=False)
-        return
+        if prior is None or prior["deleted"]:
+            return None  # nothing live was lost, so no toast and nothing to undo
+        return {
+            "id": prior["id"], "document": document,
+            "clip_id": item.id, "delete_revision": revision,
+        }
+    # A device re-uploading a clipping is an implicit restore.
     conn.execute(
         """INSERT INTO clippings
                 (revision, document, clip_id, deleted, spine, start_page, end_page, pages,
@@ -193,13 +245,15 @@ def _apply(conn: sqlite3.Connection, document: str, item: ClippingItem) -> None:
                 chapter = excluded.chapter, text = excluded.text,
                 created_at = excluded.created_at,
                 layout_signature = excluded.layout_signature,
-                start_offset = excluded.start_offset, end_offset = excluded.end_offset""",
+                start_offset = excluded.start_offset, end_offset = excluded.end_offset,
+                deleted_at = NULL, deleted_source = '', trashed_text = ''""",
         (revision, document, item.id, item.spine, item.start_page, item.end_page,
          item.pages, item.start_word, item.end_word, item.words, item.para,
          item.chapter or "", item.text, item.created_at, item.layout_signature,
          item.start_offset, item.end_offset),
     )
     _reindex(conn, document, item.id, live=True)
+    return None
 
 
 def _reindex(conn: sqlite3.Connection, document: str, clip_id: str, live: bool) -> None:
@@ -289,8 +343,19 @@ async def upload_clippings(document: str, body: ClippingUpload):
         _validate(item)
     with _connect() as conn:
         conn.execute("BEGIN IMMEDIATE")
-        for item in body.items:
-            _apply(conn, document, item)
+        tombstoned = [entry for item in body.items
+                      if (entry := _apply(conn, document, item)) is not None]
+        if tombstoned:
+            # One entry per PUT, so a sync that drops seven clippings is one toast.
+            refs: list[int] = []
+            for entry in tombstoned:
+                refs.extend(mark_citations(conn, "clipping", entry["id"]))
+            undo.record(
+                "clipping_delete",
+                delete_label("device", len(tombstoned), len(refs)),
+                {"deleted_source": "device", "clippings": tombstoned, "writing_refs": refs},
+                conn=conn,
+            )
     logger.info("Clippings: accepted %d item(s) for %s", len(body.items), document[:12])
     return {"sync_version": SYNC_VERSION, "accepted": 1}
 
@@ -399,13 +464,154 @@ async def delete_clipping(clipping_id: int):
         ).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Clipping not found")
+        revision = _next_revision(conn)
         conn.execute(
-            "UPDATE clippings SET deleted = 1, text = '', revision = ? WHERE id = ?",
-            (_next_revision(conn), clipping_id),
+            "UPDATE clippings SET deleted = 1, "
+            "trashed_text = COALESCE(NULLIF(text, ''), trashed_text), text = '', "
+            "deleted_at = CURRENT_TIMESTAMP, deleted_source = 'ui', revision = ? "
+            "WHERE id = ?",
+            (revision, clipping_id),
         )
         try:
             search_index.unindex(conn, "clipping", clipping_id)
         except sqlite3.OperationalError as exc:
             logger.warning("Search index update skipped: %s", exc)
+        refs = mark_citations(conn, "clipping", clipping_id)
+        token = undo.record(
+            "clipping_delete",
+            delete_label("ui", 1, len(refs)),
+            {
+                "deleted_source": "ui",
+                "clippings": [{
+                    "id": clipping_id, "document": row["document"],
+                    "clip_id": row["clip_id"], "delete_revision": revision,
+                }],
+                "writing_refs": refs,
+            },
+            conn=conn,
+        )
     logger.info("Clipping tombstoned: %d", clipping_id)
-    return {"deleted": clipping_id}
+    return {
+        "deleted": clipping_id, "soft": True, "revision": revision,
+        "writing_refs_marked": len(refs), "undo_token": token,
+    }
+
+
+@ui_router.post("/api/clippings/{clipping_id}/restore")
+async def restore_clipping(clipping_id: int):
+    """Bring a trashed clipping back. The reader picks it up at its next sync."""
+    init_db()
+    with _connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        if not conn.execute(
+            "SELECT 1 FROM clippings WHERE id = ?", (clipping_id,)
+        ).fetchone():
+            raise HTTPException(status_code=404, detail="Clipping not found")
+        restored = _restore_clipping(conn, clipping_id)
+        if restored is None:
+            raise HTTPException(
+                status_code=409,
+                detail="Clipping text was discarded by an older tombstone "
+                       "and cannot be restored",
+            )
+        refs = restore_citations(
+            conn, deleted_citation_ids(conn, "clipping", clipping_id)
+        )
+    logger.info("Clipping restored: %d at revision %d", clipping_id, restored["revision"])
+    return {
+        "restored": clipping_id, "revision": restored["revision"],
+        "writing_refs_restored": refs,
+    }
+
+
+def _restore_clipping(conn: sqlite3.Connection, clipping_id: int) -> dict | None:
+    """Un-tombstone one clipping on an open transaction, or None if its body is gone.
+
+    The fresh revision is mandatory. Reusing the old one leaves the row below
+    every cursor the device has already passed, so the reader never downloads it
+    again and the clipping stays missing even though the server believes it back.
+    """
+    row = conn.execute(
+        "SELECT trashed_text FROM clippings WHERE id = ?", (clipping_id,)
+    ).fetchone()
+    if row is None or not row["trashed_text"]:
+        return None
+    revision = _next_revision(conn)
+    conn.execute(
+        "UPDATE clippings SET deleted = 0, text = trashed_text, trashed_text = '', "
+        "deleted_at = NULL, deleted_source = '', revision = ? WHERE id = ?",
+        (revision, clipping_id),
+    )
+    try:
+        search_index.index_clipping(conn, clipping_id)
+    except sqlite3.OperationalError as exc:
+        logger.warning("Search index update skipped: %s", exc)
+    return {"id": clipping_id, "revision": revision}
+
+
+@undo.register("clipping_delete")
+def _undo_clipping_delete(conn: sqlite3.Connection, payload: dict) -> dict:
+    restored: list[int] = []
+    skipped: list[int] = []
+    revision = 0
+    for entry in payload.get("clippings", []):
+        done = _restore_clipping(conn, entry["id"])
+        if done is None:
+            skipped.append(entry["id"])  # purged or emptied while the token lived
+            continue
+        restored.append(entry["id"])
+        revision = max(revision, done["revision"])
+    return {
+        "restored": restored,
+        "revision": revision,
+        "writing_refs_restored": restore_citations(conn, payload.get("writing_refs", [])),
+        "skipped": skipped,
+    }
+
+
+def list_trashed_clippings() -> list[dict]:
+    """Tombstoned clippings, newest first. Pre-1.3 tombstones sort last."""
+    init_db()
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT id, clip_id, document, chapter, trashed_text, deleted_at, deleted_source "
+            "FROM clippings WHERE deleted = 1 "
+            "ORDER BY deleted_at IS NULL, deleted_at DESC, id DESC"
+        ).fetchall()
+    aliases = {h: (t, kind) for h, t, kind in _aliases()}
+    out = []
+    for row in rows:
+        title, kind = aliases.get(row["document"], ("", "book"))
+        out.append({
+            "id": row["id"],
+            "clip_id": row["clip_id"],
+            "document": row["document"],
+            "book_title": title,
+            "book_slug": canonical_book_slug(title, kind) if title else "",
+            "chapter": row["chapter"],
+            "text": row["trashed_text"],
+            "deleted_at": row["deleted_at"],
+            "deleted_source": row["deleted_source"],
+            "restorable": bool(row["trashed_text"]),
+        })
+    return out
+
+
+def purge_clipping(clipping_id: int) -> bool:
+    """Clear the saved body. The tombstone row stays, or the device resurrects the id."""
+    init_db()
+    with _connect() as conn:
+        cur = conn.execute(
+            "UPDATE clippings SET trashed_text = '' WHERE id = ? AND deleted = 1",
+            (clipping_id,),
+        )
+    return cur.rowcount > 0
+
+
+def purge_trashed_clippings() -> int:
+    init_db()
+    with _connect() as conn:
+        cur = conn.execute(
+            "UPDATE clippings SET trashed_text = '' WHERE deleted = 1 AND trashed_text != ''"
+        )
+    return cur.rowcount

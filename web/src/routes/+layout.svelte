@@ -4,11 +4,14 @@
 	import { page } from '$app/state';
 	import { onMount } from 'svelte';
 	import { panel } from '$lib/panel.svelte';
+	import { undo } from '$lib/undo.svelte';
 	import { api } from '$lib/api';
 	import type { Book, HighlightWithMeta } from '$lib/api';
 	import ScreenshotPanel from '$lib/components/ScreenshotPanel.svelte';
 	import StatusWidget from '$lib/components/StatusWidget.svelte';
 	import FontSizeControl from '$lib/components/FontSizeControl.svelte';
+	import UndoToast from '$lib/components/UndoToast.svelte';
+	import PlaceholderCover from '$lib/components/PlaceholderCover.svelte';
 
 	let { children, data } = $props();
 	let { books } = $derived(data);
@@ -18,6 +21,7 @@
 
 	onMount(async () => {
 		recentHighlights = await api.highlights.listAll(5).catch(() => []);
+		undo.rehydrate();
 		try {
 			const s = await api.status();
 			notedCount = (s as any).screenshots?.noted_count ?? 0;
@@ -32,6 +36,7 @@
 		{ href: '/highlights', label: 'Highlights' },
 		{ href: '/clippings',  label: 'Clippings' },
 		{ href: '/aliases',    label: 'Aliases' },
+		{ href: '/trash',      label: 'Trash' },
 	];
 
 	function entryHref(book: Book) {
@@ -87,8 +92,10 @@
 						<a
 							href={entryHref(book)}
 							class:active={page.url.pathname === entryHref(book)}
+							style="gap:.4rem;align-items:center"
 						>
-							<span>{book.book_title}</span>
+							<PlaceholderCover slug={book.book_title} title={book.book_title} size="sm" />
+							<span style="flex:1;min-width:0">{book.book_title}</span>
 							<span class="count">{entryCount(book)}</span>
 						</a>
 					</li>
@@ -164,6 +171,8 @@
 </nav>
 
 <FontSizeControl />
+
+<UndoToast />
 
 {#if panel.id !== null}
 	<div class="panel-overlay">

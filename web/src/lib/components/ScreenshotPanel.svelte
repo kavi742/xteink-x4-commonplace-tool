@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { api, type Screenshot, type Highlight } from '$lib/api';
 	import { panel } from '$lib/panel.svelte';
+	import { undo } from '$lib/undo.svelte';
 
 	let shot = $state<Screenshot | null>(null);
 	let highlights = $state<Highlight[]>([]);
@@ -57,8 +58,9 @@
 	}
 
 	async function removeHighlight(id: number) {
-		await api.highlights.delete(id);
+		const res = await api.highlights.delete(id);
 		highlights = highlights.filter(h => h.id !== id);
+		undo.offerToken(res.undo_token);
 	}
 
 	/** Render OCR text with <mark> around highlighted passages. */

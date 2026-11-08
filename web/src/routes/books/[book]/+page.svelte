@@ -4,6 +4,7 @@
 	import ClippingCard from '$lib/components/ClippingCard.svelte';
 	import { api, type Screenshot, type Clipping, type HighlightWithMeta } from '$lib/api';
 	import { panel } from '$lib/panel.svelte';
+	import { undo } from '$lib/undo.svelte';
 
 	let { data } = $props();
 	let { book, screenshots, calendar, readingStats } = $derived(data);
@@ -17,13 +18,15 @@
 	$effect(() => { clippings = data.clippings; });
 
 	async function removeHighlight(id: number) {
-		await api.highlights.delete(id);
+		const res = await api.highlights.delete(id);
 		highlights = highlights.filter(h => h.id !== id);
+		undo.offerToken(res.undo_token);
 	}
 
 	async function removeClipping(id: number) {
-		await api.clippings.delete(id);
+		const res = await api.clippings.delete(id);
 		clippings = clippings.filter(c => c.id !== id);
+		undo.offerToken(res.undo_token);
 	}
 
 	let grouped = $derived.by(() => {

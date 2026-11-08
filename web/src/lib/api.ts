@@ -209,6 +209,89 @@ export interface SearchReindex {
 	duration_ms: number;
 }
 
+/** Every destructive route answers with a token the toast can replay. */
+export interface DeleteResponse {
+	deleted: number;
+	soft: boolean;
+	writing_refs_marked: number;
+	undo_token: string | null;
+}
+
+export interface HighlightDeleteResponse extends DeleteResponse {
+	unmarked_vault: boolean;
+}
+
+export interface ClippingDeleteResponse extends DeleteResponse {
+	revision: number;
+}
+
+export interface PurgeResponse {
+	purged: number;
+	row_retained: boolean;
+	undo_token: null;
+	reason?: string;
+}
+
+export interface TrashedHighlight {
+	id: number;
+	screenshot_id: number;
+	selected_text: string;
+	book_title: string;
+	book_slug?: string;
+	sync_date: string;
+	deleted_at: string | null;
+}
+
+export interface TrashedClipping {
+	id: number;
+	clip_id: string;
+	document: string;
+	book_title: string;
+	book_slug: string;
+	chapter: string;
+	text: string;
+	deleted_at: string | null;
+	deleted_source: string;
+	/** False for tombstones written before soft delete landed: their text is gone. */
+	restorable: boolean;
+}
+
+export interface TrashedWritingEntry {
+	id: number;
+	book_title: string;
+	book_slug: string;
+	title: string;
+	entry_date: string;
+	excerpt: string;
+	ref_count: number;
+	deleted_at: string | null;
+	restorable: boolean;
+}
+
+export interface TrashResponse {
+	counts: { highlights: number; clippings: number; writing: number };
+	highlights: TrashedHighlight[];
+	clippings: TrashedClipping[];
+	writing: TrashedWritingEntry[];
+}
+
+export interface UndoEntry {
+	token: string;
+	kind: string;
+	/** The complete toast line. Never derive copy from `kind`. */
+	label: string;
+	created_at: number;
+	expires_at: number;
+}
+
+export interface UndoRunResponse {
+	ok: boolean;
+	already_undone: boolean;
+	kind: string;
+	label: string;
+	result: Record<string, unknown>;
+}
+
 export interface TbrBook {
 	id: number;
 	title: string;
@@ -244,15 +327,19 @@ export interface StatusResponse {
 
 type Fetch = typeof fetch;
 
-function createApi(customFetch: Fetch = fetch) {
+function createApi(customFetch?: Fetch) {
+	// Resolved per call, not captured at module load, so a caller (or a test)
+	// can replace globalThis.fetch after this module has been imported.
+	const send: Fetch = (...args) => (customFetch ?? globalThis.fetch)(...args);
+
 	async function get<T>(url: string): Promise<T> {
-		const res = await customFetch(url);
+		const res = await send(url);
 		if (!res.ok) throw new Error(`${res.status} ${res.statusText} — ${url}`);
 		return res.json() as Promise<T>;
 	}
 
 	async function put<T>(url: string, body: unknown): Promise<T> {
-		const res = await customFetch(url, {
+		const res = await send(url, {
 			method: 'PUT',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify(body),
@@ -262,7 +349,7 @@ function createApi(customFetch: Fetch = fetch) {
 	}
 
 	async function post<T>(url: string, body: unknown): Promise<T> {
-		const res = await customFetch(url, {
+		const res = await send(url, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify(body),
@@ -272,7 +359,7 @@ function createApi(customFetch: Fetch = fetch) {
 	}
 
 	async function del<T>(url: string): Promise<T> {
-		const res = await customFetch(url, { method: 'DELETE' });
+		const res = await send(url, { method: 'DELETE' });
 		if (!res.ok) throw new Error(`${res.status} ${res.statusText} — ${url}`);
 		return res.json() as Promise<T>;
 	}
@@ -314,12 +401,40 @@ function createApi(customFetch: Fetch = fetch) {
 			create: (screenshotId: number, selectedText: string) =>
 				post<Highlight>(`/api/screenshots/${screenshotId}/highlights`, { selected_text: selectedText }),
 			delete: (id: number) =>
-				del<{ deleted: number }>(`/api/highlights/${id}`),
+				del<HighlightDeleteResponse>(`/api/highlights/${id}`),
+			restore: (id: number) =>
+				post<Highlight>(`/api/highlights/${id}/restore`, {}),
 		},
 
 		clippings: {
 			listAll: (limit = 200) => get<Clipping[]>(`/api/clippings?limit=${limit}`),
-			delete: (id: number) => del<{ deleted: number }>(`/api/clippings/${id}`),
+			delete: (id: number) => del<ClippingDeleteResponse>(`/api/clippings/${id}`),
+			restore: (id: number) =>
+				post<{ restored: number; revision: number; writing_refs_restored: number }>(
+					`/api/clippings/${id}/restore`,
+					{},
+				),
+		},
+
+		trash: {
+			get: () => get<TrashResponse>('/api/trash'),
+			restoreHighlight: (id: number) => post<Highlight>(`/api/highlights/${id}/restore`, {}),
+			restoreClipping: (id: number) =>
+				post<{ restored: number; revision: number }>(`/api/clippings/${id}/restore`, {}),
+			purgeHighlight: (id: number) =>
+				del<PurgeResponse>(`/api/trash/highlights/${id}?confirm=1`),
+			purgeClipping: (id: number) =>
+				del<PurgeResponse>(`/api/trash/clippings/${id}?confirm=1`),
+			empty: () =>
+				post<{ purged: Record<string, number>; rows_retained: number }>(
+					'/api/trash/empty?confirm=1',
+					{},
+				),
+		},
+
+		undo: {
+			run: (token: string) => post<UndoRunResponse>('/api/undo', { token }),
+			recent: (limit = 5) => get<{ items: UndoEntry[] }>(`/api/undo/recent?limit=${limit}`),
 		},
 
 		search: (

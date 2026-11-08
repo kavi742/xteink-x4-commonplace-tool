@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { Book } from '$lib/api';
+	import PlaceholderCover from '$lib/components/PlaceholderCover.svelte';
 	let { book }: { book: Book } = $props();
 
 	let isCollection = $derived(book.kind === 'articles');
@@ -16,6 +17,9 @@
 </script>
 
 <a {href} class="book-card">
+	<!-- Hashes the title, not the backend slug: /api/books does not return one, and the
+	     cover only needs an input that is stable for a given book, not one the server agrees with. -->
+	<PlaceholderCover slug={book.book_title} title={book.book_title} size="fill" />
 	<div class="book-card-body">
 		<div class="book-card-title">
 			{book.book_title}

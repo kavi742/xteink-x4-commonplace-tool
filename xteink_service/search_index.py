@@ -210,7 +210,7 @@ def index_highlight(conn: sqlite3.Connection, highlight_id: int) -> None:
         "SELECT h.selected_text, h.screenshot_id, COALESCE(s.book_title, ''), "
         "COALESCE(s.sync_date, '') "
         "FROM highlights h JOIN synced_screenshots s ON s.id = h.screenshot_id "
-        "WHERE h.id = ?",
+        "WHERE h.id = ? AND h.deleted_at IS NULL",
         (highlight_id,),
     ).fetchone()
     if row is None or not row[0]:
@@ -318,7 +318,7 @@ _REBUILD = (
                h.selected_text, COALESCE(s.sync_date, ''), h.screenshot_id
         FROM highlights h
         JOIN synced_screenshots s ON s.id = h.screenshot_id
-        WHERE h.selected_text != ''
+        WHERE h.selected_text != '' AND h.deleted_at IS NULL
     """),
     ("clipping", """
         INSERT INTO search_docs

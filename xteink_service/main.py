@@ -39,6 +39,15 @@ async def watcher_loop(host: str, vault: str, state_db: str) -> None:
         await poll_for_device(host)
 
         logger.info("X4 online — starting sync")
+        # Must precede run_sync: the archiver picks a vault folder per content
+        # kind, and a screenshot folder name carries no path to judge it by.
+        try:
+            from xteink_service.alias import record_device_file_paths
+            seen = await record_device_file_paths(state_db, host)
+            logger.info("Device files recorded: %d", seen)
+        except Exception as exc:
+            logger.warning("Could not record device file paths: %s", exc)
+
         archiver = ScreenshotArchiver(vault, host, state_db)
         await archiver.run_sync()
 

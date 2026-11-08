@@ -197,6 +197,26 @@ def _lua_hash(data: bytes) -> str:
     return m.hexdigest()
 
 
+async def record_device_file_paths(state_db: str, device_host: str) -> int:
+    """Remember where every book sits on the device, before anything else runs.
+
+    The archiver files a screenshot by kind, and a screenshot folder carries no
+    path, so these have to be known before ``run_sync`` or a new article's
+    screenshots land under Books and stay there.
+    """
+    import hashlib
+
+    timeout = aiohttp.ClientTimeout(total=30)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        books = await _list_device_books(session, device_host)
+
+    seen = [(hashlib.md5(b["name"].encode()).hexdigest(), b["path"]) for b in books]
+    sconn = _state_conn(state_db)
+    record_device_files(sconn, seen)
+    reconcile_kinds(sconn, seen)
+    return len(seen)
+
+
 async def _scan_resolve(state_db: str, koreader_db: str, device_host: str) -> None:
     """Fast resolve: md5(filename) only — no downloads needed."""
     import hashlib

@@ -85,16 +85,25 @@ def kinds_by_hash(conn: sqlite3.Connection) -> dict[str, str]:
 
 
 def kind_for_title(conn: sqlite3.Connection, title: str) -> str:
-    """Classify a free-text title (a screenshot folder name, say) by alias.
+    """Classify a free-text title (a screenshot folder name, say).
 
-    Screenshot folders carry no path, so the only way to recognise an article
-    is that an alias with the same canonical slug is already marked as one.
+    Screenshot folders carry no path, so the kind has to come from something
+    that does. ``device_files`` is preferred because it holds the real
+    directory and exists even for a book that has never synced progress; the
+    alias table is the fallback.
     """
     if not title:
         return BOOK
     target = canonical_book_slug(title, ARTICLE)
     if not target:
         return BOOK
+    try:
+        for (path,) in conn.execute("SELECT path FROM device_files"):
+            stem = path.rsplit("/", 1)[-1].rsplit(".", 1)[0]
+            if canonical_book_slug(stem, ARTICLE) == target:
+                return kind_for_device_path(path)
+    except sqlite3.OperationalError:
+        pass  # pre-migration database
     for _hash, alias_title, kind in alias_rows(conn):
         if kind == ARTICLE and canonical_book_slug(alias_title, ARTICLE) == target:
             return ARTICLE

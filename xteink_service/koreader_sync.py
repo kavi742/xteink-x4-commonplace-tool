@@ -548,7 +548,9 @@ def _record_client_title(update: ProgressIn) -> None:
             update.document, title,
             filename=filename,
             resolved_by="metadata",
-            kind=content_kind.kind_for_device_path(filename),
+            # The firmware strips the directory, so a bare basename says nothing
+            # about kind. Leave it for the device walk to reconcile.
+            kind=content_kind.kind_for_device_path(filename) if "/" in filename else None,
         )
     except Exception as exc:
         logger.debug("Could not store client title for %s: %s",

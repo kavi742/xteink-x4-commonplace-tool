@@ -232,19 +232,30 @@ class SyncState:
 
     def set_title(
         self, doc_hash: str, title: str, filename: str = "",
-        resolved_by: str = "manual", kind: str = "book",
+        resolved_by: str = "manual", kind: str | None = None,
     ) -> None:
         """Map a progress hash to a title, leaving any existing mapping alone.
 
         Used for titles a client volunteers via KOReader's `metadata` payload:
         a hand-corrected alias must win over whatever the device reports.
+
+        Pass kind=None when the caller cannot know it, which is the case for
+        kosync metadata: the firmware sends a bare basename. The column default
+        applies and a later device walk reconciles it.
         """
         with sqlite3.connect(self.db_path) as conn:
-            conn.execute(
-                "INSERT OR IGNORE INTO document_aliases "
-                "(hash, title, filename, resolved_by, kind) VALUES (?,?,?,?,?)",
-                (doc_hash, title, filename, resolved_by, kind),
-            )
+            if kind is None:
+                conn.execute(
+                    "INSERT OR IGNORE INTO document_aliases "
+                    "(hash, title, filename, resolved_by) VALUES (?,?,?,?)",
+                    (doc_hash, title, filename, resolved_by),
+                )
+            else:
+                conn.execute(
+                    "INSERT OR IGNORE INTO document_aliases "
+                    "(hash, title, filename, resolved_by, kind) VALUES (?,?,?,?,?)",
+                    (doc_hash, title, filename, resolved_by, kind),
+                )
 
     # ------------------------------------------------------------------ #
     # Highlights                                                           #

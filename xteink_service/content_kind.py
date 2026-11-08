@@ -109,3 +109,27 @@ def vault_root_for(kind: str) -> str:
 def kind_for_vault_root(root: str | None) -> str:
     """Inverse of ``vault_root_for``, for rows that only recorded the folder."""
     return ARTICLE if (root or "") == "Articles" else BOOK
+
+
+def reconcile_kinds(conn: sqlite3.Connection, files: "list[tuple[str, str]]") -> int:
+    """Correct stored kinds from device paths, given ``(hash, device path)``.
+
+    The device walk is the only authoritative source. kosync metadata carries a
+    bare basename because the firmware strips the directory, so a hash first
+    seen through Send Metadata is always recorded as a book; without this an
+    article stays misfiled forever, since the resolve path only ever touches
+    unresolved hashes.
+    """
+    updated = 0
+    for doc_hash, path in files:
+        kind = kind_for_device_path(path)
+        try:
+            cur = conn.execute(
+                "UPDATE document_aliases SET kind = ? WHERE hash = ? AND COALESCE(kind,'') != ?",
+                (kind, doc_hash, kind),
+            )
+        except sqlite3.OperationalError:
+            return 0  # pre-migration database
+        updated += cur.rowcount
+    conn.commit()
+    return updated

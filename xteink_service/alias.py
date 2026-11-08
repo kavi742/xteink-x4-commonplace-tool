@@ -34,7 +34,7 @@ from datetime import datetime, timezone
 
 import aiohttp
 
-from xteink_service.content_kind import kind_for_device_path
+from xteink_service.content_kind import kind_for_device_path, reconcile_kinds
 from xteink_service.document_id import compute as _compute_hash, min_bytes_needed
 
 
@@ -198,9 +198,6 @@ async def _scan_resolve(state_db: str, koreader_db: str, device_host: str) -> No
     import hashlib
 
     unresolved = _unresolved_hashes(state_db, koreader_db)
-    if not unresolved:
-        print("All hashes already resolved.")
-        return
 
     print(f"{len(unresolved)} unresolved hash(es)")
     print(f"Scanning filenames on {device_host} (no downloads)...")
@@ -209,13 +206,24 @@ async def _scan_resolve(state_db: str, koreader_db: str, device_host: str) -> No
     async with aiohttp.ClientSession(timeout=timeout) as session:
         books = await _list_device_books(session, device_host)
 
+    sconn = _state_conn(state_db)
+
+    # Run over every device file, not just the unresolved ones: a hash first
+    # seen through Send Metadata carries a bare basename and so was recorded as
+    # a book. This is the only place that can correct it.
+    reconciled = reconcile_kinds(
+        sconn,
+        [(hashlib.md5(b["name"].encode()).hexdigest(), b["path"]) for b in books],
+    )
+    if reconciled:
+        print(f"Corrected kind on {reconciled} alias(es).")
+
     matched = 0
     for book in books:
         name = book["name"]
         h = hashlib.md5(name.encode()).hexdigest()
         if h in unresolved:
             title = name.rsplit(".", 1)[0]
-            sconn = _state_conn(state_db)
             sconn.execute(
                 "INSERT OR REPLACE INTO document_aliases "
                 "(hash, title, filename, resolved_by, computed_at, kind) "

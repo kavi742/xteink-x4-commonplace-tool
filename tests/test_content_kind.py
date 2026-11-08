@@ -108,3 +108,51 @@ def test_vault_root_round_trip():
     assert ck.kind_for_vault_root("Articles") == "article"
     assert ck.kind_for_vault_root("Books") == "book"
     assert ck.kind_for_vault_root(None) == "book"
+
+
+# ------------------------------------------------------------------ #
+# reconcile_kinds                                                      #
+# ------------------------------------------------------------------ #
+
+def _alias(conn, hash_, title, kind="book"):
+    conn.execute(
+        "INSERT INTO document_aliases (hash, title, kind) VALUES (?,?,?)",
+        (hash_, title, kind),
+    )
+    conn.commit()
+
+
+def test_reconcile_promotes_a_metadata_resolved_article(conn):
+    """Send Metadata carries a bare basename, so it always records a book.
+    The device walk is the only thing that can correct it."""
+    _alias(conn, "h1", "How to Do Nothing", kind="book")
+
+    assert ck.reconcile_kinds(conn, [("h1", "/Instapaper/How to Do Nothing.epub")]) == 1
+    assert ck.kinds_by_hash(conn)["h1"] == "article"
+
+
+def test_reconcile_demotes_a_file_moved_out_of_the_article_folder(conn):
+    _alias(conn, "h1", "Keeper", kind="article")
+
+    assert ck.reconcile_kinds(conn, [("h1", "/Books/Keeper.epub")]) == 1
+    assert ck.kinds_by_hash(conn)["h1"] == "book"
+
+
+def test_reconcile_is_a_no_op_when_the_kind_already_agrees(conn):
+    _alias(conn, "h1", "Pastoral", kind="book")
+
+    assert ck.reconcile_kinds(conn, [("h1", "/Books/Pastoral.epub")]) == 0
+
+
+def test_reconcile_ignores_hashes_with_no_alias(conn):
+    assert ck.reconcile_kinds(conn, [("nope", "/Instapaper/x.epub")]) == 0
+
+
+def test_reconcile_tolerates_a_pre_migration_database():
+    old = sqlite3.connect(":memory:")
+    old.execute("CREATE TABLE document_aliases (hash TEXT PRIMARY KEY, title TEXT)")
+    old.execute("INSERT INTO document_aliases VALUES ('h1', 'x')")
+    old.commit()
+
+    assert ck.reconcile_kinds(old, [("h1", "/Instapaper/x.epub")]) == 0
+

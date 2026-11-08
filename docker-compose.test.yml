@@ -40,6 +40,10 @@ services:
       # full web UI and API serve on every host it answers to.
       # Device directories treated as articles. Default is /Instapaper.
       - ARTICLE_PATH_PREFIXES=/Instapaper
+      # A second watcher competes with production for the device: it re-archives
+      # the same screenshots and calls cleanup_device_junk(), which deletes from
+      # the device root. Serve the API only.
+      - WATCHER_ENABLED=false
     # Not unless-stopped: this is a throwaway instance, it should not come back
     # after a reboot and start competing with production for the device.
     restart: "no"

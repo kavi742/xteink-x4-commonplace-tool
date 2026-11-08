@@ -27,6 +27,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, ConfigDict
 
+from xteink_service import search_index
 from xteink_service.booktitle import canonical_book_slug
 from xteink_service.clip_match import attach_screenshot_ids
 from xteink_service.content_kind import ARTICLES_SLUG, alias_rows
@@ -86,6 +87,7 @@ def init_db() -> None:
             "CREATE INDEX IF NOT EXISTS idx_clippings_doc_rev "
             "ON clippings (document, revision)"
         )
+        search_index.init_db(conn)
 
 
 # ------------------------------------------------------------------ #
@@ -174,6 +176,7 @@ def _apply(conn: sqlite3.Connection, document: str, item: ClippingItem) -> None:
                     revision = excluded.revision, deleted = 1, text = ''""",
             (revision, document, item.id),
         )
+        _reindex(conn, document, item.id, live=False)
         return
     conn.execute(
         """INSERT INTO clippings
@@ -196,6 +199,24 @@ def _apply(conn: sqlite3.Connection, document: str, item: ClippingItem) -> None:
          item.chapter or "", item.text, item.created_at, item.layout_signature,
          item.start_offset, item.end_offset),
     )
+    _reindex(conn, document, item.id, live=True)
+
+
+def _reindex(conn: sqlite3.Connection, document: str, clip_id: str, live: bool) -> None:
+    """Keep search in step with a written clipping. A stale index must not fail a sync."""
+    try:
+        row = conn.execute(
+            "SELECT id FROM clippings WHERE document = ? AND clip_id = ?",
+            (document, clip_id),
+        ).fetchone()
+        if not row:
+            return
+        if live:
+            search_index.index_clipping(conn, row[0])
+        else:
+            search_index.unindex(conn, "clipping", row[0])
+    except sqlite3.OperationalError as exc:
+        logger.warning("Search index update skipped: %s", exc)
 
 
 def _row_to_item(row: sqlite3.Row) -> dict:
@@ -382,5 +403,9 @@ async def delete_clipping(clipping_id: int):
             "UPDATE clippings SET deleted = 1, text = '', revision = ? WHERE id = ?",
             (_next_revision(conn), clipping_id),
         )
+        try:
+            search_index.unindex(conn, "clipping", clipping_id)
+        except sqlite3.OperationalError as exc:
+            logger.warning("Search index update skipped: %s", exc)
     logger.info("Clipping tombstoned: %d", clipping_id)
     return {"deleted": clipping_id}

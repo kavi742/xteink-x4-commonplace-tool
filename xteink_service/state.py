@@ -2,9 +2,18 @@ import hashlib
 import logging
 import sqlite3
 
+from xteink_service import search_index
 from xteink_service.content_kind import kind_for_device_path
 
 logger = logging.getLogger(__name__)
+
+
+def _index(fn, conn: sqlite3.Connection, *args) -> None:
+    """Index maintenance must never break a sync; a stale index is recoverable."""
+    try:
+        fn(conn, *args)
+    except sqlite3.OperationalError as exc:
+        logger.warning("Search index update skipped: %s", exc)
 
 
 def _backfill_alias_kinds(conn: sqlite3.Connection) -> None:
@@ -99,6 +108,16 @@ class SyncState:
                     kind         TEXT DEFAULT 'book'
                 )
             """)
+            # Full device paths seen during the last File Transfer walk. kosync
+            # only ever sends a basename, so without this an alias created by a
+            # progress push cannot be told apart from a book until the NEXT walk.
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS device_files (
+                    hash    TEXT PRIMARY KEY,
+                    path    TEXT NOT NULL,
+                    seen_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
             try:
                 conn.execute(
                     "ALTER TABLE document_aliases ADD COLUMN kind TEXT DEFAULT 'book'"
@@ -111,6 +130,7 @@ class SyncState:
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_aliases_kind ON document_aliases(kind)"
             )
+            search_index.init_db(conn)
 
     # ------------------------------------------------------------------ #
     # Screenshot dedup                                                     #
@@ -154,6 +174,14 @@ class SyncState:
                 (device_path, content_hash, book_title, sync_date, ocr_text,
                  vault_png_path, vault_root),
             )
+            # INSERT OR IGNORE yields no lastrowid on conflict, so re-read the id.
+            row = conn.execute(
+                "SELECT id FROM synced_screenshots "
+                "WHERE device_path = ? AND content_hash = ?",
+                (device_path, content_hash),
+            ).fetchone()
+            if row:
+                _index(search_index.index_screenshot, conn, row[0])
         logger.debug("Marked synced: %s", device_path.split('/')[-1])
 
     def get_screenshot(self, screenshot_id: int) -> dict | None:
@@ -185,6 +213,8 @@ class SyncState:
                 f"UPDATE synced_screenshots SET {', '.join(fields)} WHERE id = ?",
                 values,
             )
+            _index(search_index.index_screenshot, conn, screenshot_id)
+            _index(search_index.index_note, conn, screenshot_id)
 
     def list_books(self) -> list[dict]:
         with sqlite3.connect(self.db_path) as conn:
@@ -282,6 +312,7 @@ class SyncState:
                 "INSERT INTO highlights (screenshot_id, selected_text, bbox_json, img_w, img_h) VALUES (?, ?, ?, ?, ?)",
                 (screenshot_id, selected_text, bbox_json, img_w, img_h),
             )
+            _index(search_index.index_highlight, conn, cur.lastrowid)
             row = conn.execute(
                 "SELECT * FROM highlights WHERE id = ?", (cur.lastrowid,)
             ).fetchone()
@@ -299,4 +330,5 @@ class SyncState:
     def delete_highlight(self, highlight_id: int) -> bool:
         with sqlite3.connect(self.db_path) as conn:
             cur = conn.execute("DELETE FROM highlights WHERE id = ?", (highlight_id,))
+            _index(search_index.unindex, conn, "highlight", highlight_id)
         return cur.rowcount > 0

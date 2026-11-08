@@ -27,7 +27,7 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
 
-from xteink_service import logbuffer
+from xteink_service import logbuffer, search_index
 from xteink_service.booktitle import canonical_book_slug
 from xteink_service.content_kind import (
     ARTICLE,
@@ -94,20 +94,6 @@ def _pages_by_hash() -> dict[str, dict]:
         return out
     except Exception:
         return {}
-
-
-def _dedup_by_image(rows: list[dict]) -> list[dict]:
-    """Collapse stitched-page rows (same vault_png_path) to the first occurrence
-    so the same stitched image isn't returned once per constituent page."""
-    seen: set[str] = set()
-    out: list[dict] = []
-    for r in rows:
-        key = r.get("vault_png_path") or f"id:{r.get('id')}"
-        if key in seen:
-            continue
-        seen.add(key)
-        out.append(r)
-    return out
 
 
 def _vault_root_of(row) -> str:
@@ -708,6 +694,13 @@ async def update_screenshot(screenshot_id: int, body: ScreenshotUpdate):
         )
         if result.rowcount == 0:
             raise HTTPException(status_code=404, detail="Screenshot not found")
+        # This endpoint writes without going through SyncState, so it owns its
+        # own index maintenance.
+        try:
+            search_index.index_screenshot(conn, screenshot_id)
+            search_index.index_note(conn, screenshot_id)
+        except sqlite3.OperationalError as exc:
+            logger.warning("Search index update skipped: %s", exc)
 
     logger.info("Updated screenshot %d: %s", screenshot_id, ', '.join(fields))
     return {"updated": screenshot_id}
@@ -1153,101 +1146,33 @@ async def list_book_highlights(slug: str):
 
 
 @router.get("/api/search")
-async def search(q: str = "", limit: int = 50, notes_only: bool = False):
+async def search(
+    q: str = "",
+    kinds: str = "",
+    book: str = "",
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    notes_only: bool = False,
+):
+    """Ranked full-text search over screenshots, notes, highlights and clippings.
+
+    `notes_only` is a deprecated alias for `kinds=note` with an empty query,
+    which lists every screenshot carrying a note.
     """
-    Full-text search across book titles, OCR text, OCR corrections,
-    user notes, and highlights. Pass notes_only=1 to show only screenshots
-    that have user notes set.
-    """
-    if notes_only:
-        # Return all screenshots with non-empty user_notes
-        try:
-            with _state_conn() as conn:
-                rows = conn.execute("""
-                    SELECT s.*,
-                        GROUP_CONCAT(h.selected_text, '||') AS highlight_matches
-                    FROM synced_screenshots s
-                    LEFT JOIN highlights h ON h.screenshot_id = s.id
-                    WHERE s.user_notes IS NOT NULL AND s.user_notes != ''
-                    GROUP BY s.id
-                    ORDER BY s.book_title, s.sync_date, s.id
-                    LIMIT ?
-                """, (limit,)).fetchall()
-        except Exception:
-            return []
-        results = []
-        for row in rows:
-            d = dict(row)
-            hl_raw = d.pop("highlight_matches", None) or ""
-            d["highlight_matches"] = [t for t in hl_raw.split("||") if t] if hl_raw else []
-            d["match_fields"] = ["user_notes"]
-            d["snippet"] = (d.get("user_notes") or "")[:160]
-            results.append(d)
-        return _dedup_by_image(results)
+    wanted = [k.strip() for k in kinds.split(",") if k.strip() in search_index.KINDS]
+    if notes_only and not wanted:
+        wanted = ["note"]
+    # An empty query browses the selected kinds; a bare /api/search?q= stays empty.
+    match_all = bool(wanted) and not q.strip()
+    return search_index.search(
+        _state_db(), q, wanted, book, limit, offset, match_all=match_all
+    )
 
-    if not q.strip():
-        return []
 
-    like = f"%{q}%"
-
-    try:
-        with _state_conn() as conn:
-            rows = conn.execute("""
-                SELECT DISTINCT s.*,
-                    GROUP_CONCAT(h.selected_text, '||') AS highlight_matches
-                FROM synced_screenshots s
-                LEFT JOIN highlights h ON h.screenshot_id = s.id
-                WHERE
-                    s.book_title    LIKE ? OR
-                    s.ocr_text      LIKE ? OR
-                    s.ocr_corrected LIKE ? OR
-                    s.user_notes    LIKE ? OR
-                    h.selected_text LIKE ?
-                GROUP BY s.id
-                ORDER BY s.book_title, s.sync_date, s.id
-                LIMIT ?
-            """, (like, like, like, like, like, limit)).fetchall()
-    except Exception:
-        return []
-
-    q_lower = q.lower()
-    results = []
-    for row in rows:
-        d = dict(row)
-        hl_raw = d.pop("highlight_matches", None) or ""
-        d["highlight_matches"] = [t for t in hl_raw.split("||") if t] if hl_raw else []
-
-        # Determine which fields matched
-        match_fields = []
-        if q_lower in (d.get("book_title") or "").lower():
-            match_fields.append("book_title")
-        if q_lower in (d.get("ocr_text") or "").lower():
-            match_fields.append("ocr_text")
-        if q_lower in (d.get("ocr_corrected") or "").lower():
-            match_fields.append("ocr_corrected")
-        if q_lower in (d.get("user_notes") or "").lower():
-            match_fields.append("user_notes")
-        if any(q_lower in h.lower() for h in d["highlight_matches"]):
-            match_fields.append("highlights")
-        d["match_fields"] = match_fields
-
-        # Extract a short snippet from the best matching text field
-        snippet = ""
-        for field in ("ocr_corrected", "ocr_text", "user_notes"):
-            text = d.get(field) or ""
-            idx = text.lower().find(q_lower)
-            if idx >= 0:
-                start = max(0, idx - 60)
-                end = min(len(text), idx + len(q) + 60)
-                snippet = ("…" if start > 0 else "") + text[start:end] + ("…" if end < len(text) else "")
-                break
-        if not snippet and d["highlight_matches"]:
-            snippet = d["highlight_matches"][0]
-        d["snippet"] = snippet
-
-        results.append(d)
-
-    return _dedup_by_image(results)
+@router.post("/api/search/reindex")
+async def reindex_search():
+    """Re-derive the whole search index from the source tables."""
+    return search_index.rebuild(_state_db())
 
 
 @router.get("/api/screenshots/{screenshot_id}/highlights")

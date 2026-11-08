@@ -12,6 +12,7 @@ import os
 
 import uvicorn
 
+from xteink_service import search_index
 from xteink_service.archiver import ScreenshotArchiver
 from xteink_service.koreader_sync import app as koreader_app
 from xteink_service.state import SyncState
@@ -83,6 +84,12 @@ async def main() -> None:
     # Opening the state DB runs the schema migrations. Do it before serving so a
     # fresh deployment is not left unmigrated until the device first connects.
     SyncState(state_db)
+
+    # A first run (or a restore) starts with an empty index; building it can take
+    # a while over a large archive, so keep it off the event loop.
+    built = await asyncio.to_thread(search_index.ensure_built, state_db)
+    if built:
+        logger.info("search index built: %s", built)
 
     config = uvicorn.Config(
         koreader_app,

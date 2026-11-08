@@ -2,61 +2,85 @@
 	import { goto } from '$app/navigation';
 	import { api } from '$lib/api';
 	import { panel } from '$lib/panel.svelte';
-	import type { SearchResult } from '$lib/api';
+	import type { SearchHit, SearchKind, SearchResponse } from '$lib/api';
 
 	let { data } = $props();
 	let q = $state(data.q);
-	let results = $state<SearchResult[]>(data.results);
+	let response = $state<SearchResponse>(data.response);
+	let kinds = $state<SearchKind[]>(data.kinds);
 	let loading = $state(false);
 
 	$effect(() => {
 		q = data.q;
-		results = data.results;
+		response = data.response;
+		kinds = data.kinds;
 		loading = false;
 	});
 
-	const title = $derived(data.notesOnly ? 'With notes' : (data.q ? `"${data.q}"` : ''));
-
-	const FIELD_LABELS: Record<string, string> = {
-		book_title: 'Title',
-		ocr_text: 'OCR',
-		ocr_corrected: 'Correction',
-		user_notes: 'Notes',
-		highlights: 'Highlight',
+	const KIND_LABELS: Record<SearchKind, string> = {
+		screenshot: 'OCR',
+		note: 'Notes',
+		highlight: 'Highlights',
+		clipping: 'Clippings',
+		writing: 'Writing',
 	};
+	const KIND_ORDER: SearchKind[] = ['screenshot', 'note', 'highlight', 'clipping', 'writing'];
 
-	function highlight(text: string, query: string): string {
-		if (!text || !query) return escape(text);
-		const re = new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
-		return escape(text).replace(re, m => `<mark>${m}</mark>`);
+	const title = $derived(data.notesOnly ? 'With notes' : (data.q ? `"${data.q}"` : ''));
+	const shown = $derived(
+		kinds.length
+			? kinds.reduce((n, k) => n + (response.facets[k] ?? 0), 0)
+			: response.total,
+	);
+	const siblings = $derived(
+		response.results
+			.map((hit) => hit.screenshot_id)
+			.filter((id): id is number => id !== null),
+	);
+
+	function urlFor(nextKinds: SearchKind[]): string {
+		const params = new URLSearchParams();
+		if (q.trim()) params.set('q', q);
+		if (nextKinds.length) params.set('kinds', nextKinds.join(','));
+		if (data.book) params.set('book', data.book);
+		return `/search?${params}`;
 	}
 
-	function escape(s: string): string {
-		return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-	}
-
-	async function doSearch() {
-		if (!q.trim()) return;
+	async function run(nextKinds: SearchKind[]) {
 		loading = true;
-		goto(`/search?q=${encodeURIComponent(q)}`, { replaceState: true });
-		results = await api.search(q).catch(() => []);
+		kinds = nextKinds;
+		goto(urlFor(nextKinds), { replaceState: true });
+		response = await api.search(q, { kinds: nextKinds, book: data.book }).catch(() => response);
 		loading = false;
+	}
+
+	function doSearch() {
+		if (!q.trim() && kinds.length === 0) return;
+		run(kinds);
+	}
+
+	function toggle(kind: SearchKind) {
+		run(kinds.includes(kind) ? kinds.filter((k) => k !== kind) : [...kinds, kind]);
 	}
 
 	function keydown(e: KeyboardEvent) {
 		if (e.key === 'Enter') doSearch();
+	}
+
+	function openHit(hit: SearchHit) {
+		if (hit.screenshot_id !== null) panel.open(hit.screenshot_id, siblings);
 	}
 </script>
 
 <svelte:head><title>Search — xteink</title></svelte:head>
 
 {#if !data.notesOnly}
-<div style="display:flex;gap:.5rem;margin-bottom:1.5rem;align-items:center">
+<div style="display:flex;gap:.5rem;margin-bottom:1rem;align-items:center">
 	<input
 		type="text"
 		bind:value={q}
 		onkeydown={keydown}
-		placeholder="Search OCR, notes, highlights…"
+		placeholder="Search OCR, notes, highlights, clippings…"
 		style="flex:1;font-size:14px"
 	/>
 	<button onclick={doSearch} disabled={loading} style="white-space:nowrap">
@@ -64,52 +88,89 @@
 	</button>
 </div>
 {:else}
-	<div style="display:flex;align-items:center;gap:.75rem;margin-bottom:1.5rem">
+	<div style="display:flex;align-items:center;gap:.75rem;margin-bottom:1rem">
 		<h1 class="page-title" style="margin-bottom:0">📝 With notes</h1>
 		<a href="/books" style="font-size:12px;color:var(--text-muted)">← all books</a>
 	</div>
 {/if}
 
-{#if (data.q || data.notesOnly) && !loading}
-	{#if results.length === 0}
+{#if response.total > 0 || kinds.length > 0}
+	<div class="facets">
+		{#each KIND_ORDER as kind}
+			<button class="facet" class:on={kinds.includes(kind)} onclick={() => toggle(kind)}>
+				{KIND_LABELS[kind]} <span class="facet-count">{response.facets[kind] ?? 0}</span>
+			</button>
+		{/each}
+	</div>
+{/if}
+
+{#if (data.q || kinds.length > 0) && !loading}
+	{#if response.results.length === 0}
 		<p class="empty">No results{data.notesOnly ? ' — no screenshots with notes yet.' : ` for "${data.q}"`}</p>
 	{:else}
 		<p style="font-size:12px;color:var(--text-muted);margin-bottom:1rem">
-			{results.length} result{results.length === 1 ? '' : 's'}{title ? ` for ${title}` : ''}
+			{shown} result{shown === 1 ? '' : 's'}{title ? ` for ${title}` : ''}
 		</p>
 		<div style="display:flex;flex-direction:column;gap:.75rem">
-			{#each results as r}
-				<div
-					class="search-result"
-					onclick={() => panel.open(r.id, results.map(x => x.id))}
-					role="button"
-					tabindex="0"
-					onkeydown={(e) => e.key === 'Enter' && panel.open(r.id, [])}
-				>
-					<div class="search-thumb">
-						<img src={api.screenshots.imageUrl(r.id)} alt="" loading="lazy" />
-					</div>
-					<div class="search-body">
-						<div class="search-title">
-							{r.book_title}
-							<span style="font-weight:400;color:var(--text-muted)"> · {r.sync_date}</span>
+			{#each response.results as hit}
+				{#if hit.screenshot_id !== null}
+					<div
+						class="search-result"
+						onclick={() => openHit(hit)}
+						role="button"
+						tabindex="0"
+						onkeydown={(e) => e.key === 'Enter' && openHit(hit)}
+					>
+						<div class="search-thumb">
+							<img src={api.screenshots.imageUrl(hit.screenshot_id)} alt="" loading="lazy" />
 						</div>
-						{#if r.snippet}
-							<p class="search-snippet">{@html highlight(r.snippet, data.q)}</p>
-						{/if}
-						<div class="search-fields">
-							{#each r.match_fields as f}
-								<span class="search-tag">{FIELD_LABELS[f] ?? f}</span>
-							{/each}
+						<div class="search-body">
+							<div class="search-title">
+								{hit.book_title}
+								<span style="font-weight:400;color:var(--text-muted)"> · {hit.date}</span>
+							</div>
+							<!-- Escaped server-side; <mark> is the only markup SQLite emits. -->
+							<p class="search-snippet">{@html hit.snippet}</p>
+							<div class="search-fields">
+								<span class="search-tag">{KIND_LABELS[hit.kind]}</span>
+							</div>
 						</div>
 					</div>
-				</div>
+				{:else}
+					<a class="search-result" href="/books/{hit.book_slug}">
+						<div class="search-body">
+							<div class="search-title">
+								{hit.book_title || 'Unknown book'}
+								<span style="font-weight:400;color:var(--text-muted)"> · {hit.date}</span>
+							</div>
+							<p class="search-snippet">{@html hit.snippet}</p>
+							<div class="search-fields">
+								<span class="search-tag">{KIND_LABELS[hit.kind]}</span>
+							</div>
+						</div>
+					</a>
+				{/if}
 			{/each}
 		</div>
 	{/if}
 {/if}
 
 <style>
+	.facets { display: flex; gap: .4rem; flex-wrap: wrap; margin-bottom: 1.25rem; }
+	.facet {
+		font-size: 11px;
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: .04em;
+		padding: .25rem .5rem;
+		border-radius: var(--radius);
+		border: 1px solid var(--border);
+		background: var(--bg-card);
+		color: var(--text-muted);
+		cursor: pointer;
+	}
+	.facet.on { background: var(--active-bg); color: var(--text); border-color: var(--text-muted); }
+	.facet-count { font-weight: 400; opacity: .7; }
 	.search-result {
 		display: flex;
 		gap: .75rem;
@@ -119,6 +180,8 @@
 		padding: .75rem;
 		cursor: pointer;
 		align-items: flex-start;
+		text-decoration: none;
+		color: inherit;
 	}
 	.search-result:hover { border-color: var(--text-muted); }
 	.search-thumb {

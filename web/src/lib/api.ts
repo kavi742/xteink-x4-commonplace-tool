@@ -178,10 +178,35 @@ export interface Clipping {
 	kind?: 'book' | 'article';
 }
 
-export interface SearchResult extends Screenshot {
-	match_fields: string[];
+export type SearchKind = 'screenshot' | 'note' | 'highlight' | 'clipping' | 'writing';
+
+/** One indexed passage. `snippet` carries SQLite's <mark> tags and is rendered as HTML. */
+export interface SearchHit {
+	kind: SearchKind;
+	ref_id: number;
+	screenshot_id: number | null;
+	book_title: string;
+	book_slug: string;
+	date: string;
 	snippet: string;
-	highlight_matches: string[];
+	score: number;
+}
+
+export interface SearchResponse {
+	q: string;
+	kinds: SearchKind[];
+	book: string;
+	limit: number;
+	offset: number;
+	total: number;
+	facets: Record<SearchKind, number>;
+	results: SearchHit[];
+}
+
+export interface SearchReindex {
+	indexed: Record<SearchKind, number>;
+	skipped: SearchKind[];
+	duration_ms: number;
 }
 
 export interface TbrBook {
@@ -297,12 +322,20 @@ function createApi(customFetch: Fetch = fetch) {
 			delete: (id: number) => del<{ deleted: number }>(`/api/clippings/${id}`),
 		},
 
-		search: (q: string, limit = 50, notesOnly = false) => {
-			const params = new URLSearchParams({ limit: String(limit) });
+		search: (
+			q: string,
+			opts: { kinds?: SearchKind[]; book?: string; limit?: number; offset?: number } = {},
+		) => {
+			const params = new URLSearchParams();
 			if (q.trim()) params.set('q', q);
-			if (notesOnly) params.set('notes_only', '1');
-			return get<SearchResult[]>(`/api/search?${params}`);
+			if (opts.kinds?.length) params.set('kinds', opts.kinds.join(','));
+			if (opts.book) params.set('book', opts.book);
+			params.set('limit', String(opts.limit ?? 50));
+			params.set('offset', String(opts.offset ?? 0));
+			return get<SearchResponse>(`/api/search?${params}`);
 		},
+
+		reindexSearch: () => post<SearchReindex>('/api/search/reindex', {}),
 
 		tbr: {
 			list: () => get<TbrBook[]>('/api/tbr'),

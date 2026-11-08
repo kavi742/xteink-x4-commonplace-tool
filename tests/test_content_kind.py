@@ -156,3 +156,42 @@ def test_reconcile_tolerates_a_pre_migration_database():
 
     assert ck.reconcile_kinds(old, [("h1", "/Instapaper/x.epub")]) == 0
 
+
+# ------------------------------------------------------------------ #
+# device_files: closing the walk/push ordering race                    #
+# ------------------------------------------------------------------ #
+
+@pytest.fixture
+def conn_with_files(conn):
+    conn.execute("""
+        CREATE TABLE device_files (
+            hash TEXT PRIMARY KEY, path TEXT NOT NULL,
+            seen_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    return conn
+
+
+def test_kind_survives_the_walk_so_a_later_push_can_use_it(conn_with_files):
+    """The walk runs before the progress push creates the alias, so the path
+    has to outlive the walk or the article is filed as a book."""
+    ck.record_device_files(conn_with_files, [("h1", "/Instapaper/Random Numbers.epub")])
+
+    assert ck.kind_from_device_files(conn_with_files, "h1") == "article"
+
+
+def test_device_files_reports_none_for_a_file_never_seen(conn_with_files):
+    assert ck.kind_from_device_files(conn_with_files, "unseen") is None
+
+
+def test_device_files_path_is_refreshed_on_a_later_walk(conn_with_files):
+    ck.record_device_files(conn_with_files, [("h1", "/Instapaper/x.epub")])
+    ck.record_device_files(conn_with_files, [("h1", "/Books/x.epub")])
+
+    assert ck.kind_from_device_files(conn_with_files, "h1") == "book"
+
+
+def test_device_files_tolerate_a_pre_migration_database(conn):
+    assert ck.record_device_files(conn, [("h1", "/Instapaper/x.epub")]) == 0
+    assert ck.kind_from_device_files(conn, "h1") is None
+

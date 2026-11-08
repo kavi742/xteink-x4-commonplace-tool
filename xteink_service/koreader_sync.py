@@ -544,13 +544,18 @@ def _record_client_title(update: ProgressIn) -> None:
     try:
         from xteink_service.state import SyncState
         filename = (update.metadata.filename or "") if update.metadata else ""
-        SyncState(os.getenv("STATE_DB", "/data/state/state.db")).set_title(
+        state = SyncState(os.getenv("STATE_DB", "/data/state/state.db"))
+        # The firmware strips the directory, so the basename says nothing about
+        # kind. Fall back to the path recorded by the last File Transfer walk.
+        kind = content_kind.kind_for_device_path(filename) if "/" in filename else None
+        if kind is None:
+            with sqlite3.connect(state.db_path) as conn:
+                kind = content_kind.kind_from_device_files(conn, update.document)
+        state.set_title(
             update.document, title,
             filename=filename,
             resolved_by="metadata",
-            # The firmware strips the directory, so a bare basename says nothing
-            # about kind. Leave it for the device walk to reconcile.
-            kind=content_kind.kind_for_device_path(filename) if "/" in filename else None,
+            kind=kind,
         )
     except Exception as exc:
         logger.debug("Could not store client title for %s: %s",

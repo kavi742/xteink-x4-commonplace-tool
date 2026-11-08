@@ -1,0 +1,91 @@
+# Per-branch preview deployment. Created and driven by scripts/preview-deploy.sh.
+#
+# ## Preview deployments
+#
+# One disposable stack per git branch, running ALONGSIDE production and
+# incapable of touching it or the device. Never invoke this file by hand: every
+# value below comes from environment variables that scripts/preview-deploy.sh
+# exports, and the compose file fails fast (`:?`) if any of them is missing.
+#
+#   scripts/preview-deploy.sh   <branch>   # build + start, prints PREVIEW_URL=
+#   scripts/preview-teardown.sh <branch>   # stop, remove, delete its data
+#   scripts/preview-gc.sh                  # reap previews whose branch is gone
+#
+# Required environment:
+#   PREVIEW_PROJECT   docker compose -p value, "xtk-<slug>"
+#   PREVIEW_PORT      host port, 8100-8179, deterministic from the branch
+#   PREVIEW_DATA      absolute HOST path, /srv/docker/data/xteink-previews/<slug>
+#   PREVIEW_BRANCH    the original branch name, for labels and the UI banner
+#
+# PREVIEW_DATA must be an absolute host path. Bind mounts are resolved by the
+# Docker daemon on the HOST, not relative to whatever working directory the
+# caller (for example a Jenkins workspace) happens to have. The build context
+# is the opposite: `build: .` is tarred up by the client, so it correctly picks
+# up the checked-out branch's source tree.
+#
+# How this deliberately differs from docker-compose.test.yml
+# ----------------------------------------------------------
+# docker-compose.test.yml is a hand-made single-branch stack that points at the
+# real device (DEVICE_HOST=crosspoint.local) with the watcher live and the host
+# avahi socket mounted. That is actively harmful as a template for automated
+# previews: a second live watcher races production for the X4 in File Transfer
+# mode, re-archives screenshots into its own vault, and runs
+# cleanup_device_junk() against the device root, deleting files there. Every
+# preview below therefore sets WATCHER_ENABLED=false, points DEVICE_HOST at an
+# unresolvable name, and does NOT mount the avahi socket, so the preview cannot
+# discover or reach the device even if the watcher were somehow re-enabled.
+services:
+  xteink-preview:
+    build: .
+    image: ${PREVIEW_PROJECT:?set by scripts/preview-deploy.sh}:preview
+    container_name: ${PREVIEW_PROJECT:?set by scripts/preview-deploy.sh}
+    # Host PREVIEW_PORT -> container 8090. The port stays 8090 inside so the
+    # image's HEALTHCHECK (which hardcodes 8090) keeps working.
+    ports:
+      - "${PREVIEW_PORT:?set by scripts/preview-deploy.sh}:8090"
+    # Preview-only copies, seeded once from production by preview-deploy.sh.
+    # The production vault, config and state directories are never mounted
+    # here, read-write or otherwise.
+    volumes:
+      - ${PREVIEW_DATA:?set by scripts/preview-deploy.sh}/vault:/data/vault
+      - ${PREVIEW_DATA:?set by scripts/preview-deploy.sh}/config:/data/config
+      - ${PREVIEW_DATA:?set by scripts/preview-deploy.sh}/state:/data/state
+      # No /run/avahi-daemon/socket mount: see the header. Without it, .local
+      # names cannot resolve in this container at all.
+    environment:
+      # The two settings that make a preview safe. WATCHER_ENABLED=false makes
+      # xteink_service/main.py serve the API and UI only, never polling or
+      # writing to the device. DEVICE_HOST is pointed at a name that cannot
+      # resolve so that even a regression that ignores WATCHER_ENABLED fails to
+      # find anything to talk to.
+      - WATCHER_ENABLED=false
+      - DEVICE_HOST=disabled.invalid
+      - VAULT_PATH=/data/vault
+      - STATE_DB=/data/state/state.db
+      - KOREADER_DB=/data/state/koreader.db
+      - PUID=1000
+      - PGID=1000
+      - TZ=America/Toronto
+      # Device directories treated as articles. Matches production so seeded
+      # rows classify the same way.
+      - ARTICLE_PATH_PREFIXES=/Instapaper
+      - PREVIEW_BRANCH=${PREVIEW_BRANCH:?set by scripts/preview-deploy.sh}
+      # Deliberately no PUBLIC_SYNC_HOST: a preview is LAN only and is never
+      # fronted by nginx-proxy-manager, so the full UI and API must serve on
+      # every host it answers to.
+      # Deliberately no KOSYNC_USER / KOSYNC_PASSWORD: no device is ever
+      # pointed at a preview, and leaving them unset keeps the preview from
+      # depending on the production .env file.
+    # Labels are how preview-gc.sh positively identifies a stack as a preview
+    # before it will consider removing it.
+    labels:
+      - "org.xteink.preview=true"
+      - "org.xteink.preview.branch=${PREVIEW_BRANCH:?set by scripts/preview-deploy.sh}"
+      - "org.xteink.preview.data=${PREVIEW_DATA:?set by scripts/preview-deploy.sh}"
+    # Not unless-stopped: a preview is throwaway and must not come back after a
+    # reboot, holding a port and a few hundred MB of disk for a branch that was
+    # merged weeks ago.
+    restart: "no"
+    # Deliberately not on the external `proxy` network: previews are reachable
+    # only on their published LAN port and must never be reverse-proxied to a
+    # public hostname.

@@ -74,9 +74,15 @@ async def main() -> None:
     vault     = os.getenv("VAULT_PATH",  "/data/vault")
     state_db  = os.getenv("STATE_DB",    "/data/state/state.db")
     port      = int(os.getenv("PORT", "8090"))
+    # Preview deployments serve the UI against a copy of the data but must not
+    # touch the device: two instances in File Transfer mode race over the same
+    # screenshots and both try to delete the device's junk files.
+    watcher_enabled = os.getenv("WATCHER_ENABLED", "true").strip().lower() not in (
+        "0", "false", "no", "off",
+    )
 
     logger.info("Starting xteink-service")
-    logger.info("  device   : %s", host)
+    logger.info("  device   : %s", host if watcher_enabled else "(watcher disabled)")
     logger.info("  vault    : %s", vault)
     logger.info("  state db : %s", state_db)
     logger.info("  port     : %d", port)
@@ -98,6 +104,11 @@ async def main() -> None:
         log_level="info",
     )
     server = uvicorn.Server(config)
+
+    if not watcher_enabled:
+        logger.warning("WATCHER_ENABLED=false - serving the API only, device untouched")
+        await server.serve()
+        return
 
     # Run KOReader sync server + device watcher loop concurrently.
     # If either task raises, the other is cancelled and the process exits.

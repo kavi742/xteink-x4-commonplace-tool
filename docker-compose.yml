@@ -61,6 +61,21 @@ services:
     #   - "crosspoint.local:192.168.x.x"
     restart: unless-stopped
 
+  # SECURITY TRADEOFF, READ BEFORE CHANGING THIS SERVICE
+  #
+  # This container mounts the host Docker socket so its pipelines can deploy
+  # per-branch preview stacks and update the production container. Access to
+  # that socket is effectively root on the host: anything that can talk to it
+  # can start a privileged container that bind-mounts / and then edit any file
+  # on the machine. There is no container boundary left once the socket is in.
+  #
+  # Accepted here because Jenkins is reachable only over Tailscale/LAN (never
+  # published to the public internet) and runs only trusted first-party jobs
+  # from this repo. If either of those stops being true, harden it: put a
+  # socket proxy in front (e.g. tecnativa/docker-socket-proxy allowing only the
+  # container/image/exec endpoints the jobs actually need) and point DOCKER_HOST
+  # at the proxy, or move the host to rootless Docker. Neither is implemented
+  # today, on purpose, to keep the deploy path simple.
   jenkins:
     build:
       context: .
@@ -73,8 +88,36 @@ services:
       # To also allow LAN access, use 0.0.0.0 and rely on your firewall (ufw).
       - "8888:8080"
       - "50000:50000"
+    # The jenkins user (uid 1000) also gets the host docker group here, in
+    # addition to the matching group baked into Dockerfile.jenkins. Keep both:
+    # the image mapping breaks silently if the host gid ever changes, and this
+    # line is what keeps the socket usable when it does.
+    group_add:
+      - "989"
     volumes:
       - /srv/docker/data/jenkins:/var/jenkins_home
+      # Host Docker daemon. See the security note above.
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Preview stacks' data lives here. Jenkins creates one subdirectory per
+      # branch on deploy and deletes it when the branch is torn down.
+      - /srv/docker/data/xteink-previews:/srv/docker/data/xteink-previews
+      # Production state, READ-ONLY. Preview seeding copies state.db out of
+      # this; :ro makes it impossible for a pipeline bug to write back into the
+      # live database.
+      - /srv/docker/data/xteink-x4-commonplace/state:/prod-state:ro
+    # BIND-MOUNT PATHS IN PIPELINES: USE ABSOLUTE HOST PATHS ONLY.
+    #
+    # `docker compose` run inside Jenkins is only a client. The daemon doing
+    # the work is the host's, so it resolves every bind-mount source against
+    # the HOST filesystem, not against the Jenkins container. A relative path,
+    # or anything under the Jenkins workspace (/var/jenkins_home/workspace/...),
+    # does not exist from the daemon's point of view: it will silently create
+    # an empty directory at that path on the host and mount that instead, and
+    # the preview comes up with no data and no error.
+    #
+    # So preview compose files must reference /srv/docker/data/xteink-previews/
+    # (mounted above at the same path inside and outside, which is why the path
+    # is identical on both sides) and never ./data or $WORKSPACE/data.
     environment:
       - TZ=America/Toronto
     restart: unless-stopped

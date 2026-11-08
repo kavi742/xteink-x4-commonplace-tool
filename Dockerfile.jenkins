@@ -14,6 +14,20 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
 
+# --- Docker CLI + Compose v2 plugin ---
+# Client only. The jobs drive the HOST docker daemon through the socket mounted
+# in docker-compose.yml, so no daemon (docker-ce) is installed here.
+RUN install -m 0755 -d /etc/apt/keyrings \
+    && curl -fsSL https://download.docker.com/linux/debian/gpg \
+         -o /etc/apt/keyrings/docker.asc \
+    && chmod a+r /etc/apt/keyrings/docker.asc \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian bookworm stable" \
+         > /etc/apt/sources.list.d/docker.list \
+    && apt-get update && apt-get install -y --no-install-recommends \
+      docker-ce-cli \
+      docker-compose-plugin \
+    && rm -rf /var/lib/apt/lists/*
+
 # --- Android command-line tools ---
 ENV ANDROID_HOME=/opt/android-sdk
 ENV PATH="${PATH}:${ANDROID_HOME}/cmdline-tools/latest/bin:${ANDROID_HOME}/platform-tools"
@@ -35,5 +49,11 @@ RUN yes | sdkmanager --licenses > /dev/null && \
 
 # Give the jenkins user access to the SDK
 RUN chown -R jenkins:jenkins ${ANDROID_HOME}
+
+# Match the host's docker group gid (989) so the mounted /var/run/docker.sock is
+# usable without root. compose also passes group_add: ["989"] as a safety net if
+# the host gid ever changes.
+RUN groupadd -g 989 docker \
+    && usermod -aG docker jenkins
 
 USER jenkins

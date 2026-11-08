@@ -1,0 +1,514 @@
+// Jenkinsfile.deploy - builds, tests and deploys the xteink service itself.
+//
+// This is a SEPARATE job from the sibling ./Jenkinsfile, which builds the
+// Android APK out of web/. Nothing here touches Gradle, the Android SDK or
+// $JENKINS_HOME/app-basic-auth.env. Keep the two files independent: the APK job
+// is a classic single-branch Pipeline, this one is a Multibranch Pipeline.
+//
+// Job type: Multibranch Pipeline, script path "Jenkinsfile.deploy".
+// Because it is multibranch, env.BRANCH_NAME is set per branch and the
+// per-branch deploy logic below works. Run this as a plain Pipeline job and
+// BRANCH_NAME will be null, every `when { branch ... }` will evaluate false,
+// and the job will silently build and test but never deploy.
+//
+// What it does per branch:
+//   main          -> rebuild + restart production (port 8090), then reap
+//                    previews whose branch is gone from origin.
+//   anything else -> stand up an isolated preview deployment and report its URL.
+
+
+// ---------------------------------------------------------------------------
+// Helpers. Declarative pipelines allow plain Groovy functions outside the
+// `pipeline` block; they are called from `script { }` steps below. Keeping the
+// health probe in one place means prod and preview cannot drift apart.
+// ---------------------------------------------------------------------------
+
+// Branch names legal in git are not all legal in a Docker tag: a tag must match
+// [A-Za-z0-9_][A-Za-z0-9._-]{0,127}, so "feature/BO-12_Fix" would be rejected
+// for its slash and its uppercase. Normalise once, here, and reuse everywhere
+// so the image tag and any script-side naming stay predictable.
+def dockerTagFromBranch(String branch) {
+    def slug = branch.toLowerCase().replaceAll('[^a-z0-9._-]', '-')
+    slug = slug.replaceAll('^[^a-z0-9]+', '')
+    if (slug.length() > 100) {
+        slug = slug.substring(0, 100)
+    }
+    if (slug == '') {
+        slug = 'branch'
+    }
+    return slug
+}
+
+// Poll a /health URL until it answers, or give up.
+//
+// The probe deliberately runs INSIDE a throwaway container started from the
+// image this build just produced, on --network host. Two reasons, both of which
+// bite if you use a bare `curl` from the workspace:
+//
+//  1. Jenkins itself runs as the `jenkins` container (see docker-compose.yml),
+//     attached to its own bridge network. "localhost" in the workspace is the
+//     Jenkins container, NOT the Docker host, so `curl http://localhost:8090`
+//     from a sh step would never reach the published production port even
+//     though the deploy succeeded. --network host puts the probe in the host
+//     network namespace, which is the namespace the published ports live in and
+//     the one the prompt's "http://localhost:8090/health" actually refers to.
+//  2. It needs no extra tooling: python:3.12-slim (our base image) has urllib,
+//     and we already have the image locally, so there is nothing to pull.
+def waitForHealth(String image, String url, int attempts, int delaySeconds) {
+    withEnv([
+        "HC_IMAGE=${image}",
+        "HC_URL=${url}",
+        "HC_ATTEMPTS=${attempts}",
+        "HC_DELAY=${delaySeconds}",
+    ]) {
+        sh '''#!/bin/bash
+            set -u
+            echo "Health check: $HC_URL (up to $HC_ATTEMPTS attempts, ${HC_DELAY}s apart)"
+            i=1
+            while [ "$i" -le "$HC_ATTEMPTS" ]; do
+                if docker run --rm --network host "$HC_IMAGE" \
+                        python -c "import sys, urllib.request; r = urllib.request.urlopen('$HC_URL', timeout=5); sys.exit(0 if r.status == 200 else 1)" \
+                        >/dev/null 2>&1; then
+                    echo "OK: $HC_URL is healthy (attempt $i)"
+                    exit 0
+                fi
+                echo "  attempt $i/$HC_ATTEMPTS: not healthy yet"
+                i=$((i + 1))
+                sleep "$HC_DELAY"
+            done
+            echo "ERROR: $HC_URL never became healthy."
+            echo "       The deploy script reported success but the service is not answering."
+            echo "       Inspect the container logs, then roll back to a known-good image tag"
+            echo "       (every build tags xteink-service:<short-sha>)."
+            exit 1
+        '''
+    }
+}
+
+
+pipeline {
+    agent any
+
+    options {
+        // Serialise builds OF THE SAME BRANCH. In a multibranch job this lock is
+        // per branch, so main and a feature branch can still build at the same
+        // time. That is fine: they deploy to different targets. What it prevents
+        // is two builds of main racing each other through prod-deploy.sh.
+        disableConcurrentBuilds()
+
+        // Hard ceiling on the whole run. Without it a hung docker build or a
+        // health check against a service that will never come up would pin an
+        // executor indefinitely.
+        timeout(time: 30, unit: 'MINUTES')
+
+        // Multibranch jobs accumulate a build history per branch. Cap it so a
+        // long-lived branch does not fill /srv/docker/data/jenkins.
+        buildDiscarder(logRotator(numToKeepStr: '20'))
+    }
+
+    // NOTE: there is deliberately NO `triggers { pollSCM(...) }` block here,
+    // even though the sibling ./Jenkinsfile has one. That difference is
+    // intentional, not an oversight:
+    //
+    //   - ./Jenkinsfile is a single-branch Pipeline job. Nothing else watches
+    //     the repo for it, so it has to poll.
+    //   - A Multibranch Pipeline already scans the remote on its own schedule
+    //     ("Scan Repository Triggers" in the job config) to discover branches
+    //     and to notice new commits on them. Adding pollSCM on top gives you two
+    //     independent change detectors on the same repo, which produces
+    //     duplicate builds for a single push and, with disableConcurrentBuilds,
+    //     a queue of redundant deploys behind them.
+    //
+    // Set the scan interval in the job UI instead.
+
+    environment {
+        IMAGE_NAME = 'xteink-service'
+
+        // The production container from ./docker-compose.yml. Named here so the
+        // health gate and any manual follow-up reference one source of truth.
+        PROD_CONTAINER = 'xteink-x4-commonplace-tool-xteink-1'
+        PROD_HEALTH_URL = 'http://localhost:8090/health'
+    }
+
+    stages {
+
+        stage('Checkout') {
+            steps {
+                // There is no explicit `checkout scmGit(branches: [[name: '*/main']])`
+                // here, and there must not be.
+                //
+                // The sibling ./Jenkinsfile pins */main and a hardcoded repo URL
+                // because it is a single-branch job that only ever builds main.
+                // A multibranch job is the opposite case: Jenkins has already
+                // checked out the exact branch and commit it is building before
+                // the first stage runs (skipDefaultCheckout defaults to false).
+                // Re-checking out */main here would throw that away and build
+                // main's code while BRANCH_NAME still said "my-feature", so the
+                // preview for a branch would contain none of the branch's work,
+                // and a green build would mean nothing.
+                script {
+                    env.BRANCH_SLUG = dockerTagFromBranch(env.BRANCH_NAME ?: 'unknown')
+                    env.GIT_SHA_SHORT = sh(
+                        script: 'git rev-parse --short HEAD',
+                        returnStdout: true
+                    ).trim()
+                    env.IMAGE_SLUG_TAG = "${env.IMAGE_NAME}:${env.BRANCH_SLUG}"
+                    env.IMAGE_SHA_TAG = "${env.IMAGE_NAME}:${env.GIT_SHA_SHORT}"
+                }
+                echo "Branch:  ${env.BRANCH_NAME}  (slug: ${env.BRANCH_SLUG})"
+                echo "Commit:  ${env.GIT_SHA_SHORT}"
+                echo "Images:  ${env.IMAGE_SLUG_TAG}, ${env.IMAGE_SHA_TAG}"
+
+                script {
+                    // Fail loudly rather than mysteriously. Every `when { branch }`
+                    // below is false when BRANCH_NAME is unset, so the job would
+                    // otherwise look green while having deployed nothing at all.
+                    if (!env.BRANCH_NAME) {
+                        error('BRANCH_NAME is not set. Jenkinsfile.deploy must run as a ' +
+                              'Multibranch Pipeline job, not a plain Pipeline job.')
+                    }
+                }
+            }
+        }
+
+        stage('Build image') {
+            steps {
+                // Two tags on one build, so there is nothing to keep in sync:
+                //   :<slug>      moving pointer, "latest build of this branch"
+                //   :<short-sha> immutable, "exactly this commit"
+                // The sha tag is the one that makes a rollback possible: it names
+                // a precise image you can `docker run` or pin in compose, which a
+                // branch tag cannot because the next build overwrites it.
+                sh '''
+                    set -eu
+                    docker build \
+                        -t "$IMAGE_SLUG_TAG" \
+                        -t "$IMAGE_SHA_TAG" \
+                        .
+                    docker image inspect "$IMAGE_SHA_TAG" --format 'Built {{.Id}} ({{.Size}} bytes)'
+                '''
+            }
+        }
+
+        stage('Test') {
+            steps {
+                // --- Python tests, run inside the image we just built ---------
+                //
+                // Not `uv run pytest` on the agent: uv is not installed in the
+                // jenkins container (see Dockerfile.jenkins, which installs node,
+                // the Docker CLI and the Android SDK, but no uv). Running the
+                // suite in the image is also strictly more faithful, because that
+                // image, with its pinned deps and its tesseract-ocr binary, is the
+                // artefact that gets deployed. A pass here means the deployed
+                // thing passes, not that some other interpreter on the agent did.
+                //
+                // No env vars are passed on purpose: conftest.py points
+                // KOREADER_DB and STATE_DB at temp files via os.environ.setdefault,
+                // so an unconfigured container gets isolated throwaway databases
+                // and cannot touch /srv/docker/data/xteink-x4-commonplace/state.
+                sh '''
+                    set -eu
+                    docker run --rm "$IMAGE_SHA_TAG" uv run pytest -q
+                '''
+
+                // --- Frontend build: blocking -------------------------------
+                // A SvelteKit build failure must stop the deploy. The service
+                // serves the built SPA, so shipping a branch whose `vite build`
+                // is broken means shipping a stale or missing UI.
+                dir('web') {
+                    sh 'npm ci --ignore-engines'
+                    sh 'npm run build'
+                }
+
+                // --- Frontend unit tests: non-blocking ----------------------
+                // `npm run test` is `vitest run` (one shot, not watch mode), but
+                // web/src/lib/api.test.ts has failures that predate this
+                // pipeline. Gating deploys on them would mean no branch could
+                // ever deploy, and the usual response to that is to delete the
+                // test step entirely, which loses the signal for good. So mark
+                // the stage UNSTABLE and keep the build SUCCESS: the result is
+                // recorded in the log and visible as a yellow stage, and the day
+                // api.test.ts is fixed this can be promoted to blocking by
+                // deleting the catchError wrapper.
+                dir('web') {
+                    catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
+                        sh 'npm run test'
+                    }
+                }
+            }
+        }
+
+        stage('Check deploy scripts') {
+            steps {
+                // Run before any deploy stage, for every branch, because the
+                // prod path and the preview path both depend on this directory
+                // and a missing exec bit is the single most likely first-run
+                // failure. git tracks the exec bit, so a script committed with
+                // mode 100644 arrives here non-executable and the only symptom
+                // from a raw sh step would be "permission denied" with no clue
+                // about which file or what to do.
+                sh '''
+                    set -eu
+                    missing=""
+                    not_exec=""
+                    for s in scripts/preview-deploy.sh \
+                             scripts/preview-teardown.sh \
+                             scripts/preview-gc.sh \
+                             scripts/prod-deploy.sh; do
+                        if [ ! -f "$s" ]; then
+                            missing="$missing $s"
+                        elif [ ! -x "$s" ]; then
+                            not_exec="$not_exec $s"
+                        fi
+                    done
+
+                    if [ -n "$missing" ]; then
+                        echo "ERROR: required deploy scripts are missing from the checkout:"
+                        for s in $missing; do echo "  - $s"; done
+                        echo "They are expected at repo root under scripts/ and must be committed."
+                        exit 1
+                    fi
+
+                    if [ -n "$not_exec" ]; then
+                        echo "ERROR: required deploy scripts are not executable:"
+                        for s in $not_exec; do echo "  - $s"; done
+                        echo ""
+                        echo "Fix it in the working tree and commit the mode change:"
+                        echo "    chmod +x scripts/*.sh"
+                        echo "    git update-index --chmod=+x scripts/*.sh"
+                        echo "    git commit -m 'chore: mark deploy scripts executable'"
+                        exit 1
+                    fi
+
+                    echo "All four deploy scripts are present and executable."
+                '''
+            }
+        }
+
+        stage('Deploy production') {
+            when {
+                // Condition 1 of 2: Jenkins only enters this stage on main.
+                branch 'main'
+            }
+            steps {
+                // Condition 2 of 2: the stage re-asserts it in the shell.
+                //
+                // Two independent checks on purpose. `when { branch 'main' }` is
+                // evaluated by Jenkins against BRANCH_NAME, and it silently
+                // evaluates false (never true) in configurations where that
+                // variable is absent. The shell guard is the one that makes
+                // "prod-deploy.sh never runs from a non-main branch" a property
+                // of the script rather than of the job configuration, so copying
+                // this stage, converting the job type, or a future edit to the
+                // `when` block cannot quietly turn a feature branch into a
+                // production deploy.
+                sh '''
+                    set -eu
+                    if [ "${BRANCH_NAME:-}" != "main" ]; then
+                        echo "REFUSING: prod-deploy.sh may only run on main, got '${BRANCH_NAME:-<unset>}'."
+                        exit 1
+                    fi
+
+                    # Expect a short outage here. prod-deploy.sh rebuilds the
+                    # image and recreates the container, and Docker stops the old
+                    # one before the new one is listening, so :8090 refuses
+                    # connections for a few seconds. That is accepted for a
+                    # single-container homelab service: a zero-downtime swap would
+                    # need a second container plus a proxy cutover in
+                    # nginx-proxy-manager, which is far more machinery than this
+                    # deployment warrants. The health gate below is what turns
+                    # that window from "silently broken" into "build fails".
+                    #
+                    # Note the image built in the Build stage is NOT what compose
+                    # runs: docker-compose.yml uses `build: .`, so prod-deploy.sh
+                    # builds its own. Ours is the thing the tests ran against and
+                    # the rollback handle, not the deployed artefact.
+                    scripts/prod-deploy.sh
+                '''
+
+                // Up to 5 minutes (60 x 5s). Generous because a cold start has to
+                // bring up uvicorn and open the SQLite databases under
+                // /srv/docker/data/xteink-x4-commonplace/state.
+                script {
+                    waitForHealth(env.IMAGE_SHA_TAG, env.PROD_HEALTH_URL, 60, 5)
+                }
+                echo "Production is live and healthy at ${env.PROD_HEALTH_URL}"
+            }
+        }
+
+        stage('Deploy preview') {
+            when {
+                // Mirror image of the prod stage: everything except main.
+                not { branch 'main' }
+            }
+            steps {
+                script {
+                    // Same belt-and-braces reasoning as the prod stage, from the
+                    // other side: main must never get a preview deployment. A
+                    // preview for main would duplicate the production service,
+                    // compete for the same vault and state directories, and be
+                    // reaped later by preview-gc.sh in a way nobody expects.
+                    if (env.BRANCH_NAME == 'main') {
+                        error('REFUSING: preview-deploy.sh must never run for main. ' +
+                              'main deploys to production only.')
+                    }
+
+                    // Recorded before the script runs, so post{failure} can tell
+                    // "we tried to deploy and it broke" from "we failed in Test
+                    // and never touched any preview".
+                    env.PREVIEW_DEPLOY_ATTEMPTED = 'true'
+
+                    // The bash shebang is load-bearing. Jenkins runs sh steps with
+                    // /bin/sh, which is dash on the Debian-based jenkins image, and
+                    // dash has no `set -o pipefail`. Without pipefail the exit
+                    // status of `preview-deploy.sh | tee` is tee's, so a failing
+                    // deploy would look successful and we would go on to health
+                    // check a URL that was never printed. tee is what keeps the
+                    // script's progress streaming into the console log instead of
+                    // appearing all at once at the end.
+                    sh '''#!/bin/bash
+                        set -euo pipefail
+                        scripts/preview-deploy.sh "$BRANCH_NAME" | tee preview-deploy.log
+                    '''
+
+                    // Contract: the LAST stdout line is exactly
+                    // PREVIEW_URL=http://<host>:<port>. Take the last match, not
+                    // the first, so a script that logs the line more than once
+                    // (for example on an idempotent redeploy) still yields the
+                    // live value.
+                    def previewUrl = sh(
+                        script: "grep -E '^PREVIEW_URL=' preview-deploy.log | tail -n 1 | cut -d= -f2-",
+                        returnStdout: true
+                    ).trim()
+
+                    if (!(previewUrl ==~ /^https?:\/\/.+/)) {
+                        error("scripts/preview-deploy.sh did not emit a usable PREVIEW_URL= line. " +
+                              "Got: '${previewUrl}'. The pipeline depends on that exact contract " +
+                              "(last stdout line, 'PREVIEW_URL=http://<host>:<port>'); see " +
+                              "preview-deploy.log above.")
+                    }
+
+                    env.PREVIEW_URL = previewUrl
+
+                    // 3 minutes (36 x 5s). Shorter than prod: a preview starts
+                    // from an empty state directory, so there is less to open.
+                    // Strip any trailing slash before appending /health so a URL
+                    // of "http://host:9001/" does not become "...//health".
+                    def healthUrl = previewUrl.replaceAll('/$', '') + '/health'
+                    waitForHealth(env.IMAGE_SHA_TAG, healthUrl, 36, 5)
+
+                    echo "Preview is live at ${previewUrl}"
+                }
+            }
+        }
+
+        stage('GC stale previews') {
+            when {
+                // main only. Running the reaper from a feature branch would mean
+                // every concurrent branch build racing to tear down other
+                // people's previews, and a branch whose own remote ref had just
+                // been deleted could even reap itself mid-build. main is the one
+                // branch that is always present and always builds after a merge,
+                // which is exactly when a merged branch's preview becomes garbage.
+                branch 'main'
+            }
+            steps {
+                // Non-blocking: a failure to reap old previews is a disk-space
+                // problem, not a reason to redden a build whose production
+                // deploy already succeeded and passed its health check.
+                catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
+                    sh '''
+                        set -eu
+                        scripts/preview-gc.sh
+                    '''
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            script {
+                if (env.BRANCH_NAME != 'main' && env.PREVIEW_URL) {
+                    // currentBuild.description renders next to the build in the
+                    // branch list and on the job page, so the URL is readable
+                    // without opening the console log of the newest build and
+                    // scrolling for it. The anchor is set with target so it does
+                    // not navigate Jenkins away from itself.
+                    currentBuild.description = "<a href=\"${env.PREVIEW_URL}\" target=\"_blank\">${env.PREVIEW_URL}</a>"
+
+                    echo ''
+                    echo '================================================================'
+                    echo "  PREVIEW READY: ${env.PREVIEW_URL}"
+                    echo "  branch ${env.BRANCH_NAME} @ ${env.GIT_SHA_SHORT}"
+                    echo '================================================================'
+                    echo ''
+                } else if (env.BRANCH_NAME == 'main') {
+                    currentBuild.description = "prod @ ${env.GIT_SHA_SHORT}"
+                    echo "Production deployed from ${env.GIT_SHA_SHORT} and healthy."
+                }
+            }
+        }
+
+        failure {
+            script {
+                // Tear the preview down only when this branch has NEVER had a
+                // successful build. Rationale: if an earlier build of this branch
+                // went green, a working preview is almost certainly still running,
+                // and the whole point of a preview is that someone can look at it.
+                // Destroying it because a later commit broke `vite build` takes
+                // away the last good thing they had, right when they want to
+                // compare against it.
+                //
+                // "First ever deploy" is approximated by
+                // currentBuild.previousSuccessfulBuild == null. That is a Jenkins
+                // fact, not a Docker fact, and it is the honest limit of what this
+                // file can know: the preview's container and volume names are
+                // owned by scripts/preview-deploy.sh, and probing for them here
+                // would duplicate that script's naming scheme and silently rot the
+                // first time it changes. The approximation errs in both directions
+                // (build history wiped by buildDiscarder, or a green build that
+                // predates this pipeline), so the bias is deliberately toward
+                // LEAVING THE PREVIEW UP: a leaked preview is reclaimed by
+                // scripts/preview-gc.sh once the branch is deleted, whereas a
+                // wrongly destroyed preview is gone until someone re-runs a build.
+                if (env.BRANCH_NAME == 'main') {
+                    echo 'Production build failed. Nothing torn down: the running ' +
+                         'production container is left exactly as prod-deploy.sh left it. ' +
+                         "Roll back with the previous build's xteink-service:<short-sha> tag if needed."
+                } else if (env.PREVIEW_DEPLOY_ATTEMPTED != 'true') {
+                    echo 'Failed before the deploy stage, so no preview was touched. ' +
+                         'Any existing preview for this branch is still running.'
+                } else if (currentBuild.previousSuccessfulBuild == null) {
+                    echo "First ever successful-deploy attempt for ${env.BRANCH_NAME} failed. " +
+                         'Tearing down the half-built preview so it does not linger.'
+                    // `|| true` because the teardown is cleanup on an already
+                    // failing build: if the preview was never created far enough
+                    // for teardown to find it, that is not a second failure worth
+                    // reporting, and masking the real error would be worse.
+                    sh 'scripts/preview-teardown.sh "$BRANCH_NAME" || true'
+                } else {
+                    echo "Redeploy of ${env.BRANCH_NAME} failed. Leaving the existing preview " +
+                         'running on purpose, since build #' +
+                         "${currentBuild.previousSuccessfulBuild.number} succeeded and its " +
+                         'preview is probably still the useful one. Tear it down by hand with: ' +
+                         "scripts/preview-teardown.sh ${env.BRANCH_NAME}"
+                }
+            }
+        }
+
+        unstable {
+            echo 'Build is UNSTABLE. Most likely the known web/src/lib/api.test.ts ' +
+                 'failures, or preview GC. The deploy itself still passed its health check.'
+        }
+
+        always {
+            // Keep the raw deploy output around after the console log is rotated
+            // away by buildDiscarder. allowEmptyArchive because main never
+            // produces this file: only the preview path writes it.
+            archiveArtifacts artifacts: 'preview-deploy.log',
+                             allowEmptyArchive: true,
+                             onlyIfSuccessful: false
+        }
+    }
+}

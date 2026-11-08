@@ -349,6 +349,41 @@ def test_delete_clipping_removes_from_index(client, db):
     assert search_index.search(db, "attention")["results"] == []
 
 
+def test_a_clipping_indexed_before_its_alias_gets_the_title_later(db):
+    """Clippings routinely arrive before the alias naming the book: on a real
+    sync the clipping PUT beat the progress push by under two seconds. Since
+    index_clipping denormalises the alias title, the row would otherwise stay
+    indexed under no book at all."""
+    _exec(
+        db,
+        "INSERT INTO clippings (revision, document, clip_id, text, created_at) "
+        "VALUES (?,?,?,?,?)",
+        (1, "nealias", "c9", "a line worth keeping", 1793000000),
+    )
+    search_index.rebuild(db)
+    assert search_index.search(db, "keeping")["results"][0]["book_title"] == ""
+
+    _exec(
+        db,
+        "INSERT INTO document_aliases (hash, title) VALUES (?,?)",
+        ("nealias", "Random Numbers"),
+    )
+    with sqlite3.connect(db) as conn:
+        search_index.index_clippings_for_document(conn, "nealias")
+
+    assert search_index.search(db, "keeping")["results"][0]["book_title"] == "Random Numbers"
+
+
+def test_renaming_an_alias_reindexes_its_clippings(client, db):
+    _seed_clipping(db, "an excerpt about attention", title="Wrong Title", doc="bbbb2222")
+    search_index.rebuild(db)
+    assert search_index.search(db, "attention")["results"][0]["book_title"] == "Wrong Title"
+
+    assert client.put("/api/aliases/bbbb2222", json={"title": "Right Title"}).status_code == 200
+
+    assert search_index.search(db, "attention")["results"][0]["book_title"] == "Right Title"
+
+
 def test_reindex_endpoint_is_repeatable(client, db):
     _seed_screenshot(db, ocr="the pastoral mode")
     first = client.post("/api/search/reindex").json()

@@ -234,6 +234,13 @@ async def _scan_resolve(state_db: str, koreader_db: str, device_host: str) -> No
                 (h, title, name, datetime.now(timezone.utc).isoformat(),
                  kind_for_device_path(book["path"])),
             )
+            # The clipping may already be indexed with no title: index_clipping
+            # denormalises the alias title and clippings can arrive first.
+            try:
+                from xteink_service.search_index import index_clippings_for_document
+                index_clippings_for_document(sconn, h)
+            except sqlite3.OperationalError as exc:
+                print(f"  (search index skipped for {h[:8]}: {exc})")
             sconn.commit()
             unresolved.discard(h)
             print(f"  Resolved: {h[:8]}... → {title}")

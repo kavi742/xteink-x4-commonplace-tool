@@ -371,6 +371,9 @@ class SyncState:
                     "(hash, title, filename, resolved_by, kind) VALUES (?,?,?,?,?)",
                     (doc_hash, title, filename, resolved_by, kind),
                 )
+            # A clipping can arrive before its alias, and index_clipping
+            # denormalises the title, so it would stay indexed namelessly.
+            _index(search_index.index_clippings_for_document, conn, doc_hash)
 
     # ------------------------------------------------------------------ #
     # Highlights                                                           #

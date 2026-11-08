@@ -1014,6 +1014,9 @@ async def set_alias(doc_hash: str, body: AliasBody):
             (doc_hash, body.title, body.filename,
              datetime.now(timezone.utc).isoformat(), doc_hash),
         )
+        # index_clipping denormalises the alias title, so a rename staled every
+        # clipping of this document.
+        search_index.index_clippings_for_document(conn, doc_hash)
     logger.info("Alias set: %s → %s", doc_hash[:12], body.title)
     return {"hash": doc_hash, "title": body.title}
 

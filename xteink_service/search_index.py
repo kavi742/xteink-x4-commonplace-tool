@@ -234,6 +234,23 @@ def index_clipping(conn: sqlite3.Connection, clipping_id: int) -> None:
     _upsert(conn, "clipping", clipping_id, row[2], row[1], row[3], None)
 
 
+def index_clippings_for_document(conn: sqlite3.Connection, document: str) -> None:
+    """Reindex every clipping of a document after its alias changed.
+
+    ``index_clipping`` denormalises ``document_aliases.title``, so creating or
+    renaming an alias leaves the index naming the book wrongly (or not at all,
+    when the clipping arrived before the alias) until something touches each
+    clipping individually.
+    """
+    try:
+        rows = conn.execute(
+            "SELECT id FROM clippings WHERE document = ?", (document,)
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return  # no clippings table on this database
+    for row in rows:
+        index_clipping(conn, row[0])
+
 def _titles_by_slug(conn: sqlite3.Connection) -> dict[str, str]:
     """Slug to a displayable book title, from whichever source names the book."""
     out: dict[str, str] = {}

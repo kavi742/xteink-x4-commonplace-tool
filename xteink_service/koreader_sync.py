@@ -645,7 +645,15 @@ async def get_progress(document: str, _: KosyncAuth):
     """
     linked = _linked_documents(document)
     record = _store.latest_across(linked) if linked else _store._latest(document)
-    if record and record["document"] != document:
+    if not record:
+        # Must be 404, not 200 with an empty body. CrossPoint treats any 2xx with
+        # parseable JSON as a real record (KOReaderSyncClient.cpp checks no
+        # fields), so {} becomes a phantom position of 0%. A book sitting near
+        # 0% then compares equal to it, reports "already synced" and never
+        # uploads. Only 204 and 404 map to NOT_FOUND, which is what drives the
+        # device's auto-upload path.
+        raise HTTPException(status_code=404, detail="No progress for this document")
+    if record["document"] != document:
         logger.info("Cross-device sync: serving %s's position for %s to a client asking for %s",
                     record["device"] or "?", record["document"][:12], document[:12])
         # Echo the requested hash: the client asked about its own copy.

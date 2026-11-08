@@ -63,10 +63,12 @@ def test_get_progress_returns_latest():
     assert r.json()["percentage"] == 50.0
 
 
-def test_get_progress_unknown_document_returns_empty():
+def test_get_progress_unknown_document_returns_404():
+    """Not 200 with {}: CrossPoint accepts any 2xx as a real record, so an empty
+    body becomes a phantom 0% position and a book near 0% reports "already
+    synced" and never uploads. Only 204/404 map to NOT_FOUND."""
     r = client.get("/syncs/progress/nonexistent.epub")
-    assert r.status_code == 200
-    assert r.json() == {}
+    assert r.status_code == 404
 
 
 def test_list_progress_returns_all():

@@ -11,7 +11,6 @@
 	import StatusWidget from '$lib/components/StatusWidget.svelte';
 	import FontSizeControl from '$lib/components/FontSizeControl.svelte';
 	import UndoToast from '$lib/components/UndoToast.svelte';
-	import PlaceholderCover from '$lib/components/PlaceholderCover.svelte';
 
 	let { children, data } = $props();
 	let { books } = $derived(data);
@@ -47,6 +46,9 @@
 	function entryCount(book: Book) {
 		return book.kind === 'articles' ? (book.article_count ?? 0) : book.screenshot_count;
 	}
+
+	// Keyed by URL so one unreachable cover never hides the thumbnails of the other books.
+	let brokenCovers = $state<Record<string, true>>({});
 
 	let searchQ = $state('');
 
@@ -95,7 +97,17 @@
 							class:active={page.url.pathname === entryHref(book)}
 							style="gap:.4rem;align-items:center"
 						>
-							<PlaceholderCover slug={book.book_title} title={book.book_title} size="sm" />
+							{#if book.cover_url && !brokenCovers[book.cover_url]}
+								{@const cover = book.cover_url}
+								<img
+									class="book-index-cover"
+									src={cover}
+									alt=""
+									loading="lazy"
+									decoding="async"
+									onerror={() => (brokenCovers[cover] = true)}
+								/>
+							{/if}
 							<span style="flex:1;min-width:0">{book.book_title}</span>
 							<span class="count">{entryCount(book)}</span>
 						</a>

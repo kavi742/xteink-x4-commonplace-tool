@@ -6,6 +6,8 @@ Mounted on the koreader_sync FastAPI app (port 8090):
   GET  /status                               — service health snapshot
   GET  /api/books                            — book list with screenshot counts
   GET  /api/books/{slug}/screenshots         — screenshots for a book
+  GET  /api/books/{slug}/cover               — cached cover art from the vault
+  POST /api/covers/fetch                     — fetch covers missing from the cache
   GET  /api/screenshots/{id}                 — single screenshot metadata
   GET  /api/screenshots/{id}/image     — serve PNG from vault filesystem
   PUT  /api/screenshots/{id}           — update ocr_corrected / user_notes
@@ -99,6 +101,23 @@ def _pages_by_hash() -> dict[str, dict]:
                 info = counts.get(row["title"])
                 if info:
                     out[row["hash"]] = info
+        return out
+    except Exception:
+        return {}
+
+
+def _covers_by_slug() -> dict[str, dict]:
+    """Canonical book slug -> its cached cover row, for books that have one.
+
+    Titles that resolved to no cover are left out, so a caller can treat a
+    missing entry as "no art" without inspecting status.
+    """
+    try:
+        from xteink_service.covers import STATUS_OK, get_covers
+        out: dict[str, dict] = {}
+        for title, info in get_covers(_state_db()).items():
+            if info["status"] == STATUS_OK and info["cover_path"]:
+                out[canonical_book_slug(title)] = info
         return out
     except Exception:
         return {}
@@ -480,7 +499,55 @@ async def list_books():
             ),
         }
 
+    # Always our own origin: the browser must not hotlink openlibrary.org.
+    covers = _covers_by_slug()
+    for slug, entry in books.items():
+        info = covers.get(slug)
+        entry["cover_url"] = (
+            f"/api/books/{slug}/cover?v={info['version']}" if info else None
+        )
+
     return sorted(books.values(), key=lambda b: b["book_title"].lower())
+
+
+@router.get("/api/books/{slug}/cover")
+async def get_book_cover(slug: str, v: str = ""):
+    """Serve a book's cached cover JPEG from the vault.
+
+    The ``v`` query parameter is the stored content hash, so a matching request
+    can be cached forever and a stale one is revalidated on every load.
+    """
+    info = _covers_by_slug().get(canonical_book_slug(slug))
+    if not info:
+        raise HTTPException(status_code=404, detail="no cover")
+
+    books_root = (_vault_path() / "Books").resolve()
+    path = (books_root / info["cover_path"]).resolve()
+    if books_root not in path.parents or not path.is_file():
+        raise HTTPException(status_code=404, detail="no cover")
+
+    cache = (
+        "public, max-age=31536000, immutable"
+        if v and v == info["version"]
+        else "no-cache"
+    )
+    return FileResponse(
+        str(path), media_type="image/jpeg", headers={"Cache-Control": cache}
+    )
+
+
+class CoverFetchIn(BaseModel):
+    force: bool = False
+
+
+@router.post("/api/covers/fetch")
+async def fetch_covers(body: CoverFetchIn | None = None):
+    """Fetch covers now instead of waiting for the next File Transfer."""
+    from xteink_service.covers import resolve_book_covers
+    return await resolve_book_covers(
+        _state_db(), _koreader_db(), str(_vault_path()),
+        force=bool(body and body.force),
+    )
 
 
 # ------------------------------------------------------------------ #

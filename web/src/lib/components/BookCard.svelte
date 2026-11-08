@@ -1,6 +1,5 @@
 <script lang="ts">
 	import type { Book } from '$lib/api';
-	import PlaceholderCover from '$lib/components/PlaceholderCover.svelte';
 	let { book }: { book: Book } = $props();
 
 	let isCollection = $derived(book.kind === 'articles');
@@ -14,12 +13,27 @@
 		book.last_date ??
 		(book.last_read_at ? new Date(book.last_read_at * 1000).toLocaleDateString() : null)
 	);
+
+	// Recorded by URL rather than as a flag so a card reused for another book retries that book's cover.
+	let failedUrl = $state<string | null>(null);
+	let coverUrl = $derived(book.cover_url !== failedUrl ? book.cover_url : null);
+
+	function hideBrokenCover() {
+		failedUrl = book.cover_url;
+	}
 </script>
 
 <a {href} class="book-card">
-	<!-- Hashes the title, not the backend slug: /api/books does not return one, and the
-	     cover only needs an input that is stable for a given book, not one the server agrees with. -->
-	<PlaceholderCover slug={book.book_title} title={book.book_title} size="fill" />
+	{#if coverUrl}
+		<img
+			class="book-card-cover"
+			src={coverUrl}
+			alt={book.book_title}
+			loading="lazy"
+			decoding="async"
+			onerror={hideBrokenCover}
+		/>
+	{/if}
 	<div class="book-card-body">
 		<div class="book-card-title">
 			{book.book_title}

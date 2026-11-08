@@ -12,7 +12,7 @@ import os
 
 import uvicorn
 
-from xteink_service import search_index
+from xteink_service import covers, search_index
 from xteink_service.archiver import ScreenshotArchiver
 from xteink_service.koreader_sync import app as koreader_app
 from xteink_service.state import SyncState
@@ -58,6 +58,9 @@ async def watcher_loop(host: str, vault: str, state_db: str) -> None:
                 # Look up page counts (Open Library, epub estimate fallback) for
                 # books that are being read, so percentages become page numbers.
                 await resolve_book_pages(state_db, koreader_db, host, show)
+                fetched = await covers.resolve_book_covers(state_db, koreader_db, vault)
+                if fetched["fetched"]:
+                    logger.info("Covers fetched: %d", fetched["fetched"])
                 await show("Titles resolved  DONE")
             # Remove any 0-byte junk files left at the device root by the old
             # status-display mechanism (harmless if there are none).
@@ -90,6 +93,7 @@ async def main() -> None:
     # Opening the state DB runs the schema migrations. Do it before serving so a
     # fresh deployment is not left unmigrated until the device first connects.
     SyncState(state_db)
+    covers.init_db(state_db)
 
     # A first run (or a restore) starts with an empty index; building it can take
     # a while over a large archive, so keep it off the event loop.

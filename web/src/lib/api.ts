@@ -9,6 +9,8 @@ export interface Book {
 	slug: string;
 	/** Every Instapaper article collapses into one `articles` entry. */
 	kind: 'book' | 'articles';
+	/** Always a path on this backend, never an external URL, so it is safe to render directly. */
+	cover_url: string | null;
 	screenshot_count: number;
 	article_count?: number;
 	last_synced: string | null;

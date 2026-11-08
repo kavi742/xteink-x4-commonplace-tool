@@ -1,0 +1,45 @@
+# Isolated test deployment of the articles-ingest branch.
+#
+# Runs ALONGSIDE production without touching it: different port, different
+# state directory, different vault. Production stays on 8091's neighbour 8090
+# with its own volumes.
+#
+#   docker compose -f docker-compose.test.yml -p xteink-test up -d --build
+#   docker compose -f docker-compose.test.yml -p xteink-test logs -f
+#   docker compose -f docker-compose.test.yml -p xteink-test down
+#
+# The state directory is seeded from a COPY of production so the schema
+# migration is exercised against real data. Nothing here writes to the real
+# state DB or the Syncthing vault.
+services:
+  xteink-test:
+    build: .
+    container_name: xteink-articles-test
+    # Host 8091 -> container 8090. The port stays 8090 inside so the image's
+    # HEALTHCHECK (which hardcodes 8090) keeps working.
+    ports:
+      - "8091:8090"
+    volumes:
+      - /srv/docker/data/xteink-x4-commonplace-test/vault:/data/vault
+      - /srv/docker/data/xteink-x4-commonplace-test/config:/data/config
+      - /srv/docker/data/xteink-x4-commonplace-test/state:/data/state
+      - /run/avahi-daemon/socket:/run/avahi-daemon/socket
+    environment:
+      - DEVICE_HOST=crosspoint.local
+      - VAULT_PATH=/data/vault
+      - STATE_DB=/data/state/state.db
+      - KOREADER_DB=/data/state/koreader.db
+      - PUID=1000
+      - PGID=1000
+      - TZ=America/Toronto
+      # Same credentials as production so the device authenticates unchanged;
+      # only the port differs.
+      - KOSYNC_USER=xteink
+      - KOSYNC_PASSWORD=${KOSYNC_PASSWORD}
+      # Deliberately no PUBLIC_SYNC_HOST: this instance is LAN only, so the
+      # full web UI and API serve on every host it answers to.
+      # Device directories treated as articles. Default is /Instapaper.
+      - ARTICLE_PATH_PREFIXES=/Instapaper
+    # Not unless-stopped: this is a throwaway instance, it should not come back
+    # after a reboot and start competing with production for the device.
+    restart: "no"

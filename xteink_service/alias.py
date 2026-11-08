@@ -34,7 +34,11 @@ from datetime import datetime, timezone
 
 import aiohttp
 
-from xteink_service.content_kind import kind_for_device_path, reconcile_kinds
+from xteink_service.content_kind import (
+    kind_for_device_path,
+    reconcile_kinds,
+    record_device_files,
+)
 from xteink_service.document_id import compute as _compute_hash, min_bytes_needed
 
 
@@ -211,10 +215,9 @@ async def _scan_resolve(state_db: str, koreader_db: str, device_host: str) -> No
     # Run over every device file, not just the unresolved ones: a hash first
     # seen through Send Metadata carries a bare basename and so was recorded as
     # a book. This is the only place that can correct it.
-    reconciled = reconcile_kinds(
-        sconn,
-        [(hashlib.md5(b["name"].encode()).hexdigest(), b["path"]) for b in books],
-    )
+    seen = [(hashlib.md5(b["name"].encode()).hexdigest(), b["path"]) for b in books]
+    record_device_files(sconn, seen)
+    reconciled = reconcile_kinds(sconn, seen)
     if reconciled:
         print(f"Corrected kind on {reconciled} alias(es).")
 

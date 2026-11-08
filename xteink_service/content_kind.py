@@ -133,3 +133,34 @@ def reconcile_kinds(conn: sqlite3.Connection, files: "list[tuple[str, str]]") ->
         updated += cur.rowcount
     conn.commit()
     return updated
+
+
+def record_device_files(conn: sqlite3.Connection, files: "list[tuple[str, str]]") -> int:
+    """Remember ``(hash, device path)`` from a File Transfer walk.
+
+    ``reconcile_kinds`` can only fix an alias that already exists. A progress
+    push often creates the alias *after* the walk, so the path has to outlive
+    the walk for that alias to be classified at birth.
+    """
+    try:
+        conn.executemany(
+            "INSERT INTO device_files (hash, path) VALUES (?,?) "
+            "ON CONFLICT(hash) DO UPDATE SET path = excluded.path, "
+            "seen_at = CURRENT_TIMESTAMP",
+            list(files),
+        )
+    except sqlite3.OperationalError:
+        return 0  # pre-migration database
+    conn.commit()
+    return len(files)
+
+
+def kind_from_device_files(conn: sqlite3.Connection, doc_hash: str) -> str | None:
+    """Kind for a hash seen on a previous walk, or None if it was never seen."""
+    try:
+        row = conn.execute(
+            "SELECT path FROM device_files WHERE hash = ?", (doc_hash,)
+        ).fetchone()
+    except sqlite3.OperationalError:
+        return None
+    return kind_for_device_path(row[0]) if row else None

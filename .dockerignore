@@ -7,3 +7,5 @@ test_scripts/
 __pycache__/
 *.pyc
 .venv/
+web/node_modules/
+web/.svelte-kit/

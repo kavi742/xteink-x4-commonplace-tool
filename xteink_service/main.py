@@ -14,6 +14,7 @@ import uvicorn
 
 from xteink_service.archiver import ScreenshotArchiver
 from xteink_service.koreader_sync import app as koreader_app
+from xteink_service.state import SyncState
 from xteink_service.watcher import poll_for_device, wait_for_offline
 
 logging.basicConfig(
@@ -78,6 +79,10 @@ async def main() -> None:
     logger.info("  vault    : %s", vault)
     logger.info("  state db : %s", state_db)
     logger.info("  port     : %d", port)
+
+    # Opening the state DB runs the schema migrations. Do it before serving so a
+    # fresh deployment is not left unmigrated until the device first connects.
+    SyncState(state_db)
 
     config = uvicorn.Config(
         koreader_app,

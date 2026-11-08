@@ -101,7 +101,7 @@
 							</p>
 						{:else}
 							{@const detail = section.detail}
-							<div class="group group-screenshots">
+							<div class="group">
 								<p class="group-label">
 									Screenshots <span class="group-n">{detail.screenshots.length}</span>
 								</p>
@@ -114,7 +114,7 @@
 								{/if}
 							</div>
 
-							<div class="group group-clippings">
+							<div class="group">
 								<p class="group-label">
 									Clippings <span class="group-n">{detail.clippings.length}</span>
 								</p>
@@ -187,15 +187,14 @@
 	.article-state { font-size: 12px; color: var(--text-muted); }
 	.article-retry { font-size: 12px; margin-left: .5rem; }
 
-	.group { border-left: 3px solid var(--border); padding-left: .75rem; }
-	.group-screenshots { border-left-color: var(--link); }
-	.group-clippings { border-left-color: #eed49f; }
 	.group-label {
 		font-size: 10px;
 		font-weight: 700;
 		text-transform: uppercase;
 		letter-spacing: .1em;
 		color: var(--text-muted);
+		border-bottom: 1px solid var(--border);
+		padding-bottom: .4rem;
 		margin-bottom: .6rem;
 	}
 	.group-n { font-size: 10px; font-weight: 400; margin-left: .15rem; }
@@ -208,6 +207,5 @@
 		.article-title { font-size: 15px; }
 		.article-meta { font-size: 12px; }
 		.article-body { padding: .75rem .6rem; }
-		.group { padding-left: .6rem; }
 	}
 </style>

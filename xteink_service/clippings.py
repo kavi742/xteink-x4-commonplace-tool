@@ -29,6 +29,7 @@ from pydantic import BaseModel, ConfigDict
 
 from xteink_service.booktitle import canonical_book_slug
 from xteink_service.clip_match import attach_screenshot_ids
+from xteink_service.content_kind import ARTICLES_SLUG, alias_rows
 
 logger = logging.getLogger(__name__)
 
@@ -280,37 +281,70 @@ async def upload_clippings(document: str, body: ClippingUpload):
 ui_router = APIRouter(tags=["clippings"])
 
 
-def _slug_by_hash() -> dict[str, str]:
-    """Document hash → canonical book slug, from the alias table."""
+def _aliases() -> list[tuple[str, str, str]]:
+    """``(hash, title, kind)`` for every alias, or an empty list if unavailable."""
     try:
         with _connect() as conn:
-            rows = conn.execute("SELECT hash, title FROM document_aliases").fetchall()
+            return alias_rows(conn)
     except Exception:
-        return {}
-    return {r["hash"]: canonical_book_slug(r["title"]) for r in rows}
+        return []
 
 
-def _titles_by_hash() -> dict[str, str]:
-    try:
-        with _connect() as conn:
-            rows = conn.execute("SELECT hash, title FROM document_aliases").fetchall()
-    except Exception:
-        return {}
-    return {r["hash"]: r["title"] for r in rows}
+def hashes_for_slug(slug: str, kind: str = "book") -> list[str]:
+    """Document hashes of one kind whose title resolves to ``slug``.
+
+    Articles are slugged in article mode so two unrelated articles cannot share
+    a slug and swap screenshot links; see ``booktitle``.
+    """
+    target = canonical_book_slug(slug, kind)
+    if not target:
+        return []
+    return [
+        h for h, t, k in _aliases()
+        if k == kind and canonical_book_slug(t, k) == target
+    ]
 
 
 def _decorate(rows: list[sqlite3.Row]) -> list[dict]:
-    """Add the resolved book title and matching screenshot id to each clipping."""
-    titles = _titles_by_hash()
+    """Add the resolved book title, content kind, and matching screenshot id."""
+    aliases = {h: (t, kind) for h, t, kind in _aliases()}
     out = []
     for row in rows:
         clip = dict(row)
-        clip["book_title"] = titles.get(row["document"], "")
+        title, kind = aliases.get(row["document"], ("", "book"))
+        clip["book_title"] = title
+        clip["kind"] = kind
         out.append(clip)
-    slugs = {h: canonical_book_slug(t) for h, t in titles.items()}
+    slugs = {h: canonical_book_slug(t, kind) for h, (t, kind) in aliases.items()}
     with _connect() as conn:
         attach_screenshot_ids(conn, out, slugs)
     return out
+
+
+def clipping_counts_by_document() -> dict[str, int]:
+    """Live (non-tombstoned) clipping count per document hash."""
+    init_db()
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT document, COUNT(*) AS n FROM clippings "
+            "WHERE deleted = 0 GROUP BY document"
+        ).fetchall()
+    return {r["document"]: r["n"] for r in rows}
+
+
+def clippings_for_documents(hashes: list[str]) -> list[dict]:
+    """Live clippings for a set of document hashes, in reading order."""
+    init_db()
+    if not hashes:
+        return []
+    placeholders = ",".join("?" * len(hashes))
+    with _connect() as conn:
+        rows = conn.execute(
+            f"SELECT * FROM clippings WHERE deleted = 0 AND document IN ({placeholders}) "
+            "ORDER BY spine, start_page, start_word",
+            hashes,
+        ).fetchall()
+    return _decorate(rows)
 
 
 @ui_router.get("/api/clippings")
@@ -328,19 +362,9 @@ async def all_clippings(limit: int = Query(default=200, ge=1, le=1000)):
 @ui_router.get("/api/books/{slug}/clippings")
 async def book_clippings(slug: str):
     """Clippings for a book, across every document hash that resolves to it."""
-    init_db()
-    wanted = canonical_book_slug(slug)
-    hashes = [h for h, s in _slug_by_hash().items() if s == wanted]
-    if not hashes:
+    if canonical_book_slug(slug) == ARTICLES_SLUG:
         return []
-    placeholders = ",".join("?" * len(hashes))
-    with _connect() as conn:
-        rows = conn.execute(
-            f"SELECT * FROM clippings WHERE deleted = 0 AND document IN ({placeholders}) "
-            "ORDER BY spine, start_page, start_word",
-            hashes,
-        ).fetchall()
-    return _decorate(rows)
+    return clippings_for_documents(hashes_for_slug(slug, "book"))
 
 
 @ui_router.delete("/api/clippings/{clipping_id}")

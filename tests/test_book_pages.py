@@ -71,14 +71,14 @@ def test_books_needing_pages_only_read_and_uncached(tmp_path):
     _seed_koreader(koreader_db)
 
     todo = book_pages._books_needing_pages(state_db, koreader_db)
-    titles = {t for t, _ in todo}
+    titles = {t for t, _f, _k in todo}
     # only the two books with progress; the unread one is excluded
     assert titles == {"Fifteen-Dogs", "Pastoral"}
 
     # once cached, a book drops out of the todo list
     book_pages._store(state_db, "Fifteen-Dogs", 175, "openlibrary")
     todo2 = book_pages._books_needing_pages(state_db, koreader_db)
-    assert {t for t, _ in todo2} == {"Pastoral"}
+    assert {t for t, _f, _k in todo2} == {"Pastoral"}
 
 
 def test_books_needing_pages_no_progress(tmp_path):

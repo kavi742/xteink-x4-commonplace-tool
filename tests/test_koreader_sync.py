@@ -411,3 +411,57 @@ def test_unaliased_hash_falls_back_to_its_own_history(tmp_path, monkeypatch):
         "document": "loner", "progress": "0/Ch3", "percentage": 0.3,
         "device": "CrossPoint", "device_id": "crosspoint-reader"})
     assert client.get("/syncs/progress/loner").json()["percentage"] == 0.3
+
+
+def test_articles_are_never_linked_to_each_other(tmp_path, monkeypatch):
+    """Two unrelated articles whose book-mode slugs collide must stay apart.
+
+    Article titles are arbitrary prose, so pushing one article's position onto
+    another is a real risk that no amount of title matching can rule out.
+    """
+    from xteink_service.koreader_sync import _linked_documents
+    from xteink_service.state import SyncState
+    state_db = str(tmp_path / "state.db")
+    monkeypatch.setenv("STATE_DB", state_db)
+    state = SyncState(state_db)
+    state.set_title("artA", "Attention - The Atlantic", kind="article")
+    state.set_title("artB", "Attention - Wired", kind="article")
+
+    assert _linked_documents("artA") == ["artA"]
+
+    client.post("/syncs/progress", json={
+        "document": "artA", "progress": "0/Ch1", "percentage": 0.1,
+        "device": "CrossPoint", "device_id": "crosspoint-reader"})
+    client.post("/syncs/progress", json={
+        "document": "artB", "progress": "0/Ch1", "percentage": 0.9,
+        "device": "CrossPoint", "device_id": "crosspoint-reader"})
+
+    body = client.get("/syncs/progress/artA").json()
+    assert body["percentage"] == 0.1
+    assert body["document"] == "artA"
+
+
+def test_an_article_never_borrows_a_books_position(tmp_path, monkeypatch):
+    from xteink_service.koreader_sync import _linked_documents
+    from xteink_service.state import SyncState
+    state_db = str(tmp_path / "state.db")
+    monkeypatch.setenv("STATE_DB", state_db)
+    state = SyncState(state_db)
+    state.set_title("bookhash", "Attention - Someone")
+    state.set_title("arthash", "Attention", kind="article")
+
+    assert _linked_documents("arthash") == ["arthash"]
+    assert _linked_documents("bookhash") == ["bookhash"]
+
+
+def test_books_still_link_when_an_article_is_present(tmp_path, monkeypatch):
+    from xteink_service.koreader_sync import _linked_documents
+    from xteink_service.state import SyncState
+    state_db = str(tmp_path / "state.db")
+    monkeypatch.setenv("STATE_DB", state_db)
+    state = SyncState(state_db)
+    state.set_title("x4hash", "Life of Pi - Yann Martel")
+    state.set_title("kindlehash", "Life of Pi")
+    state.set_title("arthash", "Something Else", kind="article")
+
+    assert sorted(_linked_documents("x4hash")) == ["kindlehash", "x4hash"]

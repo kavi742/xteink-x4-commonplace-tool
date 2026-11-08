@@ -3,12 +3,14 @@ import hashlib
 import io
 import logging
 import re
+import sqlite3
 from datetime import datetime
 
 import aiohttp
 import pytesseract
 from PIL import Image, PngImagePlugin
 
+from xteink_service import content_kind
 from xteink_service.status_display import x4_status
 from xteink_service.state import SyncState
 from xteink_service.vault_writer import VaultWriter
@@ -62,9 +64,11 @@ class ScreenshotArchiver:
                 groups = self._group_consecutive(screenshots)
                 total = len(groups)
                 book_counts: dict[str, int] = {}
+                kinds = self._kinds_for_books({g[0][1] for g in groups})
 
                 for gi, group in enumerate(groups, 1):
                     book, day = group[0][1], group[0][2]
+                    kind = kinds.get(book, "book")
 
                     # Download the not-yet-synced pages of this group
                     pages = []  # (idx, filepath, content, content_hash)
@@ -98,15 +102,16 @@ class ScreenshotArchiver:
 
                     # Reuse the first unsynced page's listing slot as the filename index
                     write_index = min(idx for idx, *_ in pages)
-                    embed = self._vault.write_screenshot(book, day, png_data, write_index)
+                    embed = self._vault.write_screenshot(book, day, png_data, write_index, kind)
                     self._vault.write_screenshot_meta(
-                        embed, pages[0][1], pages[0][3], book, day.isoformat(), ocr_text
+                        embed, pages[0][1], pages[0][3], book, day.isoformat(), ocr_text, kind
                     )
-                    self._vault.append_to_daily_note(book, day, embed, ocr_text)
+                    self._vault.append_to_daily_note(book, day, embed, ocr_text, kind)
+                    vault_root = content_kind.vault_root_for(kind)
                     for _idx, filepath, _content, content_hash in pages:
                         self._state.mark_synced(
                             filepath, content_hash, book, day.isoformat(), ocr_text,
-                            vault_png_path=embed,
+                            vault_png_path=embed, vault_root=vault_root,
                         )
 
                     book_counts[book] = book_counts.get(book, 0) + len(pages)
@@ -143,6 +148,23 @@ class ScreenshotArchiver:
     # ------------------------------------------------------------------ #
 
     _parse_filename = staticmethod(parse_screenshot_filename)
+
+    def _kinds_for_books(self, book_titles: set[str]) -> dict[str, str]:
+        """Classify each screenshot folder once per run.
+
+        A folder only resolves to an article once its alias exists, so the very
+        first sync of a brand-new article archives it as a book. The next sync,
+        after the alias scan has run, files it correctly.
+        """
+        try:
+            with sqlite3.connect(self._state.db_path) as conn:
+                return {
+                    title: content_kind.kind_for_title(conn, title)
+                    for title in book_titles
+                }
+        except sqlite3.Error as exc:
+            logger.debug("Could not classify screenshot folders: %s", exc)
+            return {}
 
     @staticmethod
     def _group_consecutive(screenshots, max_run: int = 6):

@@ -134,3 +134,65 @@ def test_update_book_timeline_with_cfi(tmp_path):
                             progress="/body/DocFragment[12]/body")
     content = (tmp_path / "Books" / "Pastoral.md").read_text()
     assert "§12" in content
+
+
+# ------------------------------------------------------------------ #
+# Articles                                                             #
+# ------------------------------------------------------------------ #
+
+def test_article_screenshot_goes_under_articles(tmp_path):
+    vw = VaultWriter(str(tmp_path))
+    embed = vw.write_screenshot(
+        "How to Do Nothing", date(2026, 7, 3), b"pngbytes", 1, "article"
+    )
+    expected = tmp_path / "Articles" / "How to Do Nothing" / "2026-07-03-01.png"
+    assert expected.exists()
+    assert embed == "How to Do Nothing/2026-07-03-01.png"
+    assert not (tmp_path / "Books").exists()
+
+
+def test_article_note_and_timeline_share_one_file(tmp_path):
+    """Screenshots and reading progress must not split into two notes."""
+    vw = VaultWriter(str(tmp_path))
+    vw.append_to_daily_note(
+        "How to Do Nothing", date(2026, 7, 3),
+        "How to Do Nothing/2026-07-03-01.png", None, "article",
+    )
+    vw.update_book_timeline(
+        "How to Do Nothing", "Jenny Odell", date(2026, 7, 3), 45.3,
+        kind="article",
+    )
+    note = tmp_path / "Articles" / "How to Do Nothing.md"
+    content = note.read_text()
+    assert "![[How to Do Nothing/2026-07-03-01.png]]" in content
+    assert "45.3%" in content
+    assert not (tmp_path / "Books").exists()
+
+
+def test_article_sidecar_records_the_kind(tmp_path):
+    import json
+    vw = VaultWriter(str(tmp_path))
+    embed = vw.write_screenshot(
+        "How to Do Nothing", date(2026, 7, 3), b"pngbytes", 1, "article"
+    )
+    vw.write_screenshot_meta(
+        embed, "/screenshots/How to Do Nothing/a.bmp", "h1",
+        "How to Do Nothing", "2026-07-03", "some text", "article",
+    )
+    sidecar = tmp_path / "Articles" / "How to Do Nothing" / "2026-07-03-01.json"
+    meta = json.loads(sidecar.read_text())
+    assert meta["kind"] == "article"
+    assert meta["book_title"] == "How to Do Nothing"
+
+
+def test_book_sidecar_records_the_kind(tmp_path):
+    import json
+    vw = VaultWriter(str(tmp_path))
+    embed = vw.write_screenshot("Pastoral", date(2026, 7, 3), b"x", 1)
+    vw.write_screenshot_meta(
+        embed, "/screenshots/Pastoral/a.bmp", "h1", "Pastoral", "2026-07-03", None
+    )
+    meta = json.loads(
+        (tmp_path / "Books" / "Pastoral" / "2026-07-03-01.json").read_text()
+    )
+    assert meta["kind"] == "book"

@@ -34,6 +34,7 @@ from datetime import datetime, timezone
 
 import aiohttp
 
+from xteink_service.content_kind import kind_for_device_path
 from xteink_service.document_id import compute as _compute_hash, min_bytes_needed
 
 
@@ -45,9 +46,15 @@ def _state_conn(path: str) -> sqlite3.Connection:
             title       TEXT NOT NULL,
             filename    TEXT DEFAULT '',
             resolved_by TEXT DEFAULT 'manual',
-            computed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            computed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            kind        TEXT DEFAULT 'book'
         )
     """)
+    try:
+        conn.execute("ALTER TABLE document_aliases ADD COLUMN kind TEXT DEFAULT 'book'")
+    except sqlite3.OperationalError:
+        pass  # column already exists
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_aliases_kind ON document_aliases(kind)")
     conn.commit()
     return conn
 
@@ -104,8 +111,10 @@ def add_alias(state_db: str, doc_hash: str, title: str, filename: str = "") -> N
     conn = _state_conn(state_db)
     conn.execute(
         "INSERT OR REPLACE INTO document_aliases "
-        "(hash, title, filename, resolved_by, computed_at) VALUES (?, ?, ?, 'manual', ?)",
-        (doc_hash, title, filename, datetime.now(timezone.utc).isoformat()),
+        "(hash, title, filename, resolved_by, computed_at, kind) "
+        "VALUES (?, ?, ?, 'manual', ?, "
+        "COALESCE((SELECT kind FROM document_aliases WHERE hash = ?), 'book'))",
+        (doc_hash, title, filename, datetime.now(timezone.utc).isoformat(), doc_hash),
     )
     conn.commit()
     print(f"Mapped  {doc_hash}  →  {title}")
@@ -209,8 +218,10 @@ async def _scan_resolve(state_db: str, koreader_db: str, device_host: str) -> No
             sconn = _state_conn(state_db)
             sconn.execute(
                 "INSERT OR REPLACE INTO document_aliases "
-                "(hash, title, filename, resolved_by, computed_at) VALUES (?,?,?,'auto',?)",
-                (h, title, name, datetime.now(timezone.utc).isoformat()),
+                "(hash, title, filename, resolved_by, computed_at, kind) "
+                "VALUES (?,?,?,'auto',?,?)",
+                (h, title, name, datetime.now(timezone.utc).isoformat(),
+                 kind_for_device_path(book["path"])),
             )
             sconn.commit()
             unresolved.discard(h)
@@ -261,8 +272,10 @@ async def _preload_all_aliases(state_db: str, device_host: str, show=None) -> No
             title = name.rsplit(".", 1)[0]
             sconn.execute(
                 "INSERT OR IGNORE INTO document_aliases "
-                "(hash, title, filename, resolved_by, computed_at) VALUES (?,?,?,'auto',?)",
-                (h, title, name, datetime.now(timezone.utc).isoformat()),
+                "(hash, title, filename, resolved_by, computed_at, kind) "
+                "VALUES (?,?,?,'auto',?,?)",
+                (h, title, name, datetime.now(timezone.utc).isoformat(),
+                 kind_for_device_path(book["path"])),
             )
             added += 1
     sconn.commit()
@@ -311,8 +324,11 @@ async def _auto_resolve(state_db: str, koreader_db: str, device_host: str) -> No
                     sconn = _state_conn(state_db)
                     sconn.execute(
                         "INSERT OR REPLACE INTO document_aliases "
-                        "(hash, title, filename, resolved_by, computed_at) VALUES (?,?,?,'auto',?)",
-                        (matched_hash, title, name, datetime.now(timezone.utc).isoformat()),
+                        "(hash, title, filename, resolved_by, computed_at, kind) "
+                        "VALUES (?,?,?,'auto',?,?)",
+                        (matched_hash, title, name,
+                         datetime.now(timezone.utc).isoformat(),
+                         kind_for_device_path(path)),
                     )
                     sconn.commit()
                     unresolved.discard(matched_hash)

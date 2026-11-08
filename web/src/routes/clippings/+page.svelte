@@ -3,24 +3,57 @@
 	import ClippingCard from '$lib/components/ClippingCard.svelte';
 	import type { Clipping } from '$lib/api';
 
+	type Group = { title: string; mapped: boolean; kind: 'book' | 'article'; items: Clipping[] };
+
 	let { data } = $props();
 	let clippings = $state<Clipping[]>(data.clippings);
 
 	let grouped = $derived.by(() => {
-		const map = new Map<string, Clipping[]>();
+		const map = new Map<string, Group>();
 		for (const c of clippings) {
-			const key = c.book_title || 'Unmapped book';
-			if (!map.has(key)) map.set(key, []);
-			map.get(key)!.push(c);
+			const kind: 'book' | 'article' = c.kind === 'article' ? 'article' : 'book';
+			const title = c.book_title || (kind === 'article' ? 'Unmapped article' : 'Unmapped book');
+			const key = `${kind}:${title}`;
+			if (!map.has(key)) map.set(key, { title, mapped: !!c.book_title, kind, items: [] });
+			map.get(key)!.items.push(c);
 		}
-		return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+		return [...map.values()].sort((a, b) => a.title.localeCompare(b.title));
 	});
+
+	let bookGroups = $derived(grouped.filter(g => g.kind === 'book'));
+	let articleGroups = $derived(grouped.filter(g => g.kind === 'article'));
+
+	function groupHref(g: Group): string | undefined {
+		if (!g.mapped) return undefined;
+		return g.kind === 'article' ? '/articles' : `/books/${encodeURIComponent(g.title)}`;
+	}
 
 	async function remove(id: number) {
 		await api.clippings.delete(id);
 		clippings = clippings.filter(c => c.id !== id);
 	}
 </script>
+
+{#snippet groupList(groups: Group[])}
+	{#each groups as g}
+		{@const href = groupHref(g)}
+		<section style="margin-bottom:2rem">
+			<p class="date-heading">
+				{#if href}
+					<a {href} style="color:inherit">{g.title}</a>
+				{:else}
+					<span>{g.title}</span>
+				{/if}
+				<span style="font-weight:400;margin-left:.5rem">({g.items.length})</span>
+			</p>
+			<div style="display:flex;flex-direction:column;gap:.5rem">
+				{#each g.items as c}
+					<ClippingCard clipping={c} {href} onDelete={() => remove(c.id)} />
+				{/each}
+			</div>
+		</section>
+	{/each}
+{/snippet}
 
 <svelte:head><title>Clippings — xteink</title></svelte:head>
 
@@ -32,25 +65,23 @@
 		Settings &rsaquo; KOReader Sync &rsaquo; Sync Clippings and sync.
 	</p>
 {:else}
-	{#each grouped as [book, items]}
-		<section style="margin-bottom:2rem">
-			<p class="date-heading">
-				{#if book === 'Unmapped book'}
-					<span>{book}</span>
-				{:else}
-					<a href="/books/{encodeURIComponent(book)}" style="color:inherit">{book}</a>
-				{/if}
-				<span style="font-weight:400;margin-left:.5rem">({items.length})</span>
-			</p>
-			<div style="display:flex;flex-direction:column;gap:.5rem">
-				{#each items as c}
-					<ClippingCard
-						clipping={c}
-						href={c.book_title ? `/books/${encodeURIComponent(c.book_title)}` : undefined}
-						onDelete={() => remove(c.id)}
-					/>
-				{/each}
-			</div>
-		</section>
-	{/each}
+	{#if bookGroups.length > 0}
+		<p class="kind-heading">From books</p>
+		{@render groupList(bookGroups)}
+	{/if}
+	{#if articleGroups.length > 0}
+		<p class="kind-heading">From articles</p>
+		{@render groupList(articleGroups)}
+	{/if}
 {/if}
+
+<style>
+	.kind-heading {
+		font-size: 13px;
+		font-weight: 700;
+		color: var(--text);
+		margin-bottom: 1rem;
+		padding-bottom: .4rem;
+		border-bottom: 2px solid var(--border);
+	}
+</style>

@@ -12,14 +12,18 @@ Because those strings never match, the same book used to split into two entries
 (and its screenshots and reading log landed on two different URLs).
 ``canonical_book_slug`` maps both forms to one value so the API can join them
 without the user hand-editing every alias.
+
+Articles (``kind="article"``) are slugified from the full title instead. Their
+names are prose, not Calibre filenames, so the author-strip and article-move
+steps would merge unrelated articles into one slug.
 """
 import re
 
-_ARTICLE_SUFFIX = re.compile(r"^(.*),\s*(the|a|an)$", re.IGNORECASE)
+_TRAILING_ARTICLE = re.compile(r"^(.*),\s*(the|a|an)$", re.IGNORECASE)
 
 
-def canonical_book_slug(title: str | None) -> str:
-    """Return a normalised, comparable slug for a book title.
+def canonical_book_slug(title: str | None, kind: str = "book") -> str:
+    """Return a normalised, comparable slug for a title.
 
     Examples (all collapse to ``"the-hidden-keys"``)::
 
@@ -35,21 +39,24 @@ def canonical_book_slug(title: str | None) -> str:
     2. Move a trailing ``", The"`` / ``", A"`` / ``", An"`` article to the front.
     3. Lower-case and replace every run of non-alphanumeric characters with a
        single hyphen.
+
+    ``kind="article"`` applies step 3 only.
     """
     if not title:
         return ""
     s = title.strip()
 
-    # 1. Drop a trailing " - Author" segment (keep earlier " - " in the title).
-    if " - " in s:
-        head = s.rsplit(" - ", 1)[0].strip()
-        if head:
-            s = head
+    if kind != "article":
+        # 1. Drop a trailing " - Author" segment (keep earlier " - " in the title).
+        if " - " in s:
+            head = s.rsplit(" - ", 1)[0].strip()
+            if head:
+                s = head
 
-    # 2. "Hidden Keys, The" -> "The Hidden Keys"
-    m = _ARTICLE_SUFFIX.match(s)
-    if m:
-        s = f"{m.group(2)} {m.group(1)}"
+        # 2. "Hidden Keys, The" -> "The Hidden Keys"
+        m = _TRAILING_ARTICLE.match(s)
+        if m:
+            s = f"{m.group(2)} {m.group(1)}"
 
     # 3. Slugify.
     return re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-")

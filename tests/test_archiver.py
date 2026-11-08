@@ -310,3 +310,24 @@ def test_stitch_pngs_single_image_unchanged_size():
     a = ScreenshotArchiver._bmp_to_png(_make_bmp(width=4, height=3))
     img = Image.open(io.BytesIO(ScreenshotArchiver._stitch_pngs([a])))
     assert img.size == (4, 3)
+
+
+# ------------------------------------------------------------------ #
+# _kinds_for_books                                                     #
+# ------------------------------------------------------------------ #
+
+def test_kinds_for_books_reads_the_alias_table(tmp_path):
+    from xteink_service.state import SyncState
+    state_db = str(tmp_path / "state.db")
+    state = SyncState(state_db)
+    state.set_title("art1", "How to Do Nothing", kind="article")
+    state.set_title("b1", "Pastoral")
+
+    archiver = ScreenshotArchiver(str(tmp_path / "vault"), "host", state_db)
+    kinds = archiver._kinds_for_books({"How-to-Do-Nothing", "Pastoral", "Unknown"})
+
+    assert kinds == {
+        "How-to-Do-Nothing": "article",
+        "Pastoral": "book",
+        "Unknown": "book",
+    }

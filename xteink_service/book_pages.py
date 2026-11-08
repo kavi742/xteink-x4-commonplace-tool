@@ -9,6 +9,10 @@ and per-book stats. Page counts come from two sources, best first:
 2. **Word-count estimate** (``pages`` module) — download the epub and divide its
    word count by a typical page density. Used only when Open Library has no hit.
 
+Articles never go to Open Library. ``limit=1`` with no similarity check means a
+generic article title confidently matches an unrelated book, and the bogus count
+then feeds ``pages_read``, so they go straight to the word-count estimate.
+
 Counts are cached in the ``book_pages`` table (keyed by the same title used in
 ``document_aliases``) so each book is looked up only once. Resolution runs during
 File Transfer, when the device is reachable for the epub fallback.
@@ -23,6 +27,7 @@ import urllib.request
 import aiohttp
 
 from xteink_service import pages as _pages
+from xteink_service.content_kind import kinds_by_hash
 
 logger = logging.getLogger(__name__)
 
@@ -104,10 +109,10 @@ def _store(state_db: str, title: str, total_pages: int, source: str) -> None:
         conn.close()
 
 
-def _books_needing_pages(state_db: str, koreader_db: str) -> list[tuple[str, str]]:
+def _books_needing_pages(state_db: str, koreader_db: str) -> list[tuple[str, str, str]]:
     """Books that have reading progress but no cached page count.
 
-    Returns ``[(title, filename), ...]`` for aliased hashes seen in
+    Returns ``[(title, filename, kind), ...]`` for aliased hashes seen in
     progress_updates whose title is not yet in book_pages.
     """
     try:
@@ -125,13 +130,14 @@ def _books_needing_pages(state_db: str, koreader_db: str) -> list[tuple[str, str
     conn = _conn(state_db)
     try:
         have = {r[0] for r in conn.execute("SELECT title FROM book_pages")}
-        todo: list[tuple[str, str]] = []
+        kinds = kinds_by_hash(conn)
+        todo: list[tuple[str, str, str]] = []
         seen: set[str] = set()
         for h, title, filename in conn.execute(
             "SELECT hash, title, filename FROM document_aliases"
         ):
             if h in synced and title and title not in have and title not in seen:
-                todo.append((title, filename or title))
+                todo.append((title, filename or title, kinds.get(h, "book")))
                 seen.add(title)
         return todo
     finally:
@@ -189,9 +195,9 @@ async def resolve_book_pages(
     device_books: list[dict] | None = None  # lazily loaded for the fallback only
     resolved = 0
 
-    for title, filename in todo:
+    for title, filename, kind in todo:
         query = filename.rsplit(".", 1)[0] if filename else title
-        total_pages = lookup_openlibrary_pages(query)
+        total_pages = None if kind == "article" else lookup_openlibrary_pages(query)
         source = "openlibrary"
 
         if not total_pages:

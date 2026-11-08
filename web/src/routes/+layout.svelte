@@ -5,7 +5,7 @@
 	import { onMount } from 'svelte';
 	import { panel } from '$lib/panel.svelte';
 	import { api } from '$lib/api';
-	import type { HighlightWithMeta } from '$lib/api';
+	import type { Book, HighlightWithMeta } from '$lib/api';
 	import ScreenshotPanel from '$lib/components/ScreenshotPanel.svelte';
 	import StatusWidget from '$lib/components/StatusWidget.svelte';
 	import FontSizeControl from '$lib/components/FontSizeControl.svelte';
@@ -26,12 +26,21 @@
 
 	const navLinks = [
 		{ href: '/books',      label: 'Books' },
+		{ href: '/articles',   label: 'Articles' },
 		{ href: '/log',        label: 'Reading Log' },
 		{ href: '/tbr',        label: 'TBR' },
 		{ href: '/highlights', label: 'Highlights' },
 		{ href: '/clippings',  label: 'Clippings' },
 		{ href: '/aliases',    label: 'Aliases' },
 	];
+
+	function entryHref(book: Book) {
+		return book.kind === 'articles' ? '/articles' : `/books/${encodeURIComponent(book.book_title)}`;
+	}
+
+	function entryCount(book: Book) {
+		return book.kind === 'articles' ? (book.article_count ?? 0) : book.screenshot_count;
+	}
 
 	let searchQ = $state('');
 
@@ -76,11 +85,11 @@
 				{#each books as book}
 					<li>
 						<a
-							href="/books/{encodeURIComponent(book.book_title)}"
-							class:active={page.url.pathname === '/books/' + encodeURIComponent(book.book_title)}
+							href={entryHref(book)}
+							class:active={page.url.pathname === entryHref(book)}
 						>
 							<span>{book.book_title}</span>
-							<span class="count">{book.screenshot_count}</span>
+							<span class="count">{entryCount(book)}</span>
 						</a>
 					</li>
 				{/each}

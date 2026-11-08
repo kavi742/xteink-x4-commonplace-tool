@@ -78,6 +78,18 @@
 				<div class="stat"><span class="stat-num">{stats.books_read.all_time}</span><span class="stat-cap">all-time</span></div>
 			</div>
 		</div>
+		{#if stats.articles_read}
+			<div class="stats-group">
+				<div class="stats-label">Articles Finished</div>
+				<div class="stats-row">
+					<div class="stat"><span class="stat-num">{stats.articles_read.today}</span><span class="stat-cap">today</span></div>
+					<div class="stat"><span class="stat-num">{stats.articles_read.week}</span><span class="stat-cap">week</span></div>
+					<div class="stat"><span class="stat-num">{stats.articles_read.month}</span><span class="stat-cap">month</span></div>
+					<div class="stat"><span class="stat-num">{stats.articles_read.year}</span><span class="stat-cap">year</span></div>
+					<div class="stat"><span class="stat-num">{stats.articles_read.all_time}</span><span class="stat-cap">all-time</span></div>
+				</div>
+			</div>
+		{/if}
 	</div>
 {/if}
 

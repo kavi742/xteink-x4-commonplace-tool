@@ -45,10 +45,16 @@ def _item(clip_id: str, text: str = "A sentence worth keeping.", **over) -> dict
 def clean_table():
     yield
     with sqlite3.connect(_state_db()) as conn:
-        try:
-            conn.execute("DELETE FROM clippings")
-        except sqlite3.OperationalError:
-            pass
+        for table in ("clippings", "document_aliases"):
+            try:
+                conn.execute(f"DELETE FROM {table}")
+            except sqlite3.OperationalError:
+                pass
+
+
+def _alias(doc_hash: str, title: str, kind: str = "book") -> None:
+    from xteink_service.state import SyncState
+    SyncState(_state_db()).set_title(doc_hash, title, kind=kind)
 
 
 def test_probe_reports_sync_version_2():
@@ -170,3 +176,46 @@ def test_ui_list_and_delete():
     # Deleting from the UI must still reach the device as a tombstone.
     synced = client.get(URL, params={"cursor": 0, "limit": 10}).json()
     assert synced["items"][0]["deleted"] == 1
+
+
+# ------------------------------------------------------------------ #
+# Articles                                                             #
+# ------------------------------------------------------------------ #
+
+ARTICLE_DOC = "cccccccccccccccccccccccccccccc01"
+ARTICLE_URL = f"/api/v1/clippings/{ARTICLE_DOC}"
+
+
+def test_clipping_carries_its_content_kind():
+    _alias(DOC, "Pastoral")
+    _alias(ARTICLE_DOC, "How to Do Nothing", kind="article")
+    client.put(URL, json={"items": [_item("clip-book")]})
+    client.put(ARTICLE_URL, json={"items": [_item("clip-article")]})
+
+    by_id = {c["clip_id"]: c for c in client.get("/api/clippings").json()}
+    assert by_id["clip-book"]["kind"] == "book"
+    assert by_id["clip-book"]["book_title"] == "Pastoral"
+    assert by_id["clip-article"]["kind"] == "article"
+    assert by_id["clip-article"]["book_title"] == "How to Do Nothing"
+
+
+def test_unaliased_clipping_defaults_to_book():
+    client.put(URL, json={"items": [_item("clip-1")]})
+    assert client.get("/api/clippings").json()[0]["kind"] == "book"
+
+
+def test_book_clippings_exclude_articles():
+    """A book slug must not pick up an article whose title slugs the same way."""
+    _alias(DOC, "Attention - Someone")
+    _alias(ARTICLE_DOC, "Attention", kind="article")
+    client.put(URL, json={"items": [_item("clip-book")]})
+    client.put(ARTICLE_URL, json={"items": [_item("clip-article")]})
+
+    ids = [c["clip_id"] for c in client.get("/api/books/Attention/clippings").json()]
+    assert ids == ["clip-book"]
+
+
+def test_reserved_articles_slug_returns_no_book_clippings():
+    _alias(DOC, "Articles")
+    client.put(URL, json={"items": [_item("clip-1")]})
+    assert client.get("/api/books/articles/clippings").json() == []

@@ -29,9 +29,20 @@ from pydantic import BaseModel
 
 from xteink_service import logbuffer
 from xteink_service.booktitle import canonical_book_slug
+from xteink_service.content_kind import (
+    ARTICLE,
+    ARTICLES_SLUG,
+    ARTICLES_TITLE,
+    alias_rows,
+    kind_for_vault_root,
+    kinds_by_hash,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+# A reading position at or beyond this fraction counts the book as finished.
+FINISHED = 0.95
 
 # ------------------------------------------------------------------ #
 # Helpers                                                              #
@@ -99,13 +110,180 @@ def _dedup_by_image(rows: list[dict]) -> list[dict]:
     return out
 
 
+def _vault_root_of(row) -> str:
+    """Top-level vault folder a screenshot was written to.
+
+    Rows archived before articles existed have no value here and live under
+    Books, which is also where an unmigrated database lands.
+    """
+    return dict(row).get("vault_root") or "Books"
+
+
+def _ensure_alias_kind(conn: sqlite3.Connection) -> None:
+    """Add document_aliases.kind if this database predates it (migration-safe)."""
+    try:
+        conn.execute("ALTER TABLE document_aliases ADD COLUMN kind TEXT DEFAULT 'book'")
+    except sqlite3.OperationalError:
+        pass  # column already exists
+
+
+def _articles_index(conn: sqlite3.Connection) -> dict[str, dict]:
+    """Article slug -> ``{"title", "hashes"}`` for aliases marked as articles."""
+    index: dict[str, dict] = {}
+    for doc_hash, title, kind in alias_rows(conn):
+        if kind != ARTICLE or not title:
+            continue
+        slug = canonical_book_slug(title, ARTICLE)
+        if not slug:
+            continue
+        index.setdefault(slug, {"title": title, "hashes": []})["hashes"].append(doc_hash)
+    return index
+
+
+def _article_titles_for_slug(conn: sqlite3.Connection, slug: str) -> list[str]:
+    """Distinct screenshot folder names belonging to one article."""
+    return [
+        r["book_title"]
+        for r in conn.execute("SELECT DISTINCT book_title FROM synced_screenshots")
+        if r["book_title"] and canonical_book_slug(r["book_title"], ARTICLE) == slug
+    ]
+
+
+def _screenshot_rows(conn: sqlite3.Connection, titles: list[str]) -> list[dict]:
+    """Screenshot rows for a set of titles, one per stitched image.
+
+    Stitched screenshots write ONE image but mark each constituent page as its
+    own row (all sharing one vault_png_path, needed for sync dedup). Only the
+    lowest-id row of each group is returned so the same image isn't listed once
+    per page.
+    """
+    if not titles:
+        return []
+    ph = ",".join("?" for _ in titles)
+    rows = conn.execute(
+        f"""
+        SELECT * FROM synced_screenshots
+        WHERE book_title IN ({ph})
+          AND id IN (
+              SELECT MIN(id) FROM synced_screenshots
+              WHERE book_title IN ({ph})
+              GROUP BY COALESCE(vault_png_path, CAST(id AS TEXT))
+          )
+        ORDER BY id
+        """,
+        titles + titles,
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def _collect_articles() -> list[dict]:
+    """Every article that has any activity: screenshots, clippings, or progress.
+
+    An alias on its own only means the file sits on the card, so those are left
+    out for the same reason unread books are left out of ``/api/books``.
+    """
+    try:
+        with _state_conn() as conn:
+            index = _articles_index(conn)
+            if not index:
+                return []
+            shot_rows = conn.execute("""
+                SELECT book_title,
+                       COUNT(DISTINCT COALESCE(vault_png_path, CAST(id AS TEXT))) AS screenshot_count,
+                       MAX(synced_at) AS last_synced,
+                       MAX(sync_date) AS last_date
+                FROM synced_screenshots
+                GROUP BY book_title
+            """).fetchall()
+    except Exception:
+        return []
+
+    shots: dict[str, dict] = {}
+    for r in shot_rows:
+        slug = canonical_book_slug(r["book_title"] or "", ARTICLE)
+        if slug not in index:
+            continue
+        agg = shots.setdefault(
+            slug, {"screenshot_count": 0, "last_synced": None, "last_date": None}
+        )
+        agg["screenshot_count"] += r["screenshot_count"]
+        for key in ("last_synced", "last_date"):
+            if r[key] and (agg[key] is None or r[key] > agg[key]):
+                agg[key] = r[key]
+
+    try:
+        with _koreader_conn() as conn:
+            progress = {
+                r["document"]: r for r in conn.execute(
+                    "SELECT document, MAX(timestamp) AS last_read_at, "
+                    "MAX(percentage) AS pct FROM progress_updates GROUP BY document"
+                )
+            }
+    except Exception:
+        progress = {}
+
+    try:
+        from xteink_service.clippings import clipping_counts_by_document
+        clip_counts = clipping_counts_by_document()
+    except Exception:
+        clip_counts = {}
+
+    from xteink_service.pages import page_at
+    pages_by_hash = _pages_by_hash()
+
+    out: list[dict] = []
+    for slug, entry in index.items():
+        hashes = entry["hashes"]
+        agg = shots.get(slug, {})
+        screenshot_count = agg.get("screenshot_count", 0)
+        clipping_count = sum(clip_counts.get(h, 0) for h in hashes)
+        read = [progress[h] for h in hashes if h in progress]
+        if not read and not screenshot_count and not clipping_count:
+            continue
+        pct = max((r["pct"] for r in read), default=None)
+        info = next((pages_by_hash[h] for h in hashes if h in pages_by_hash), None)
+        total_pages = info["total_pages"] if info else None
+        out.append({
+            "slug": slug,
+            "title": entry["title"],
+            "hashes": hashes,
+            "screenshot_count": screenshot_count,
+            "clipping_count": clipping_count,
+            "percentage_display": round(pct * 100, 1) if pct is not None else None,
+            "last_read_at": max((r["last_read_at"] for r in read), default=None),
+            "finished": pct is not None and pct >= FINISHED,
+            "total_pages": total_pages,
+            "page": (
+                page_at(pct, total_pages)
+                if pct is not None and total_pages else None
+            ),
+            "last_synced": agg.get("last_synced"),
+            "last_date": agg.get("last_date"),
+        })
+
+    out.sort(key=lambda a: (
+        a["last_read_at"] is None, -(a["last_read_at"] or 0), a["title"].lower()
+    ))
+    return out
+
+
+_ARTICLE_FIELDS = (
+    "slug", "title", "hashes", "screenshot_count", "clipping_count",
+    "percentage_display", "last_read_at", "finished", "total_pages", "page",
+)
+
+
 def _book_titles_for_slug(conn: sqlite3.Connection, slug: str) -> list[str]:
     """Distinct screenshot book_titles whose canonical slug matches ``slug``."""
     target = canonical_book_slug(slug)
+    if target == ARTICLES_SLUG:
+        return []
+    article_slugs = set(_articles_index(conn))
     return [
         r["book_title"]
         for r in conn.execute("SELECT DISTINCT book_title FROM synced_screenshots")
         if r["book_title"] and canonical_book_slug(r["book_title"]) == target
+        and canonical_book_slug(r["book_title"], ARTICLE) not in article_slugs
     ]
 
 
@@ -114,15 +292,17 @@ def _hashes_for_book(slug: str) -> list[str]:
 
     The screenshot folder name ("The-Hidden-Keys") and the Calibre alias title
     ("Hidden Keys, The - Andre Alexis") canonicalise to the same slug, so a
-    book's screenshots and reading progress resolve under one URL.
+    book's screenshots and reading progress resolve under one URL. Articles are
+    excluded: they are served by ``/api/articles`` instead.
     """
     target = canonical_book_slug(slug)
+    if target == ARTICLES_SLUG:
+        return []
     try:
         with _state_conn() as conn:
             return [
-                r["hash"]
-                for r in conn.execute("SELECT hash, title FROM document_aliases")
-                if canonical_book_slug(r["title"]) == target
+                h for h, title, kind in alias_rows(conn)
+                if kind != ARTICLE and canonical_book_slug(title) == target
             ]
     except Exception:
         return []
@@ -221,10 +401,21 @@ async def list_books():
     Only aliases that actually have progress count: the File Transfer preload
     maps every epub on the device, and listing all of those would bury the books
     actually being read.
+
+    Articles never appear individually. They collapse into one "Articles" entry
+    whose detail lives behind /api/articles.
     """
+    articles = _collect_articles()
+    article_slugs = {a["slug"] for a in articles}
+
     books: dict[str, dict] = {}
+    titles: dict[str, str] = {}
+    kinds: dict[str, str] = {}
     try:
         with _state_conn() as conn:
+            for h, title, kind in alias_rows(conn):
+                titles[h] = title
+                kinds[h] = kind
             for r in conn.execute("""
                 SELECT book_title,
                        COUNT(DISTINCT COALESCE(vault_png_path, CAST(id AS TEXT))) AS screenshot_count,
@@ -235,16 +426,17 @@ async def list_books():
             """):
                 if not r["book_title"]:
                     continue
-                books[canonical_book_slug(r["book_title"])] = {
-                    **dict(r), "percentage_display": None, "last_read_at": None,
+                if canonical_book_slug(r["book_title"], ARTICLE) in article_slugs:
+                    continue
+                slug = canonical_book_slug(r["book_title"])
+                books[slug] = {
+                    **dict(r), "slug": slug, "kind": "book",
+                    "percentage_display": None, "last_read_at": None,
                 }
     except Exception:
         pass
 
     try:
-        with _state_conn() as conn:
-            titles = {row["hash"]: row["title"]
-                      for row in conn.execute("SELECT hash, title FROM document_aliases")}
         with _koreader_conn() as conn:
             progress = conn.execute("""
                 SELECT document, MAX(timestamp) AS last_read_at,
@@ -253,17 +445,18 @@ async def list_books():
             """).fetchall()
     except Exception:
         progress = []
-        titles = {}
 
     for r in progress:
         title = titles.get(r["document"])
-        if not title:
+        if not title or kinds.get(r["document"]) == ARTICLE:
             continue
         slug = canonical_book_slug(title)
         entry = books.get(slug)
         if entry is None:
             entry = books[slug] = {
                 "book_title": title,
+                "slug": slug,
+                "kind": "book",
                 "screenshot_count": 0,
                 "last_synced": None,
                 "last_date": None,
@@ -275,7 +468,60 @@ async def list_books():
             entry["last_read_at"] = r["last_read_at"]
             entry["percentage_display"] = round(r["pct"] * 100, 1)
 
+    if articles:
+        books[ARTICLES_SLUG] = {
+            "book_title": ARTICLES_TITLE,
+            "slug": ARTICLES_SLUG,
+            "kind": "articles",
+            "screenshot_count": sum(a["screenshot_count"] for a in articles),
+            "article_count": len(articles),
+            "last_synced": max((a["last_synced"] for a in articles if a["last_synced"]),
+                               default=None),
+            "last_date": max((a["last_date"] for a in articles if a["last_date"]),
+                             default=None),
+            "percentage_display": None,
+            "last_read_at": max(
+                (a["last_read_at"] for a in articles if a["last_read_at"] is not None),
+                default=None,
+            ),
+        }
+
     return sorted(books.values(), key=lambda b: b["book_title"].lower())
+
+
+# ------------------------------------------------------------------ #
+# Articles                                                             #
+# ------------------------------------------------------------------ #
+
+@router.get("/api/articles")
+async def list_articles():
+    """Every article behind the collapsed "Articles" entry in /api/books."""
+    return [{k: a[k] for k in _ARTICLE_FIELDS} for a in _collect_articles()]
+
+
+@router.get("/api/articles/{slug}")
+async def get_article(slug: str):
+    """One article with its own screenshots and clippings."""
+    article = next((a for a in _collect_articles() if a["slug"] == slug), None)
+    if article is None:
+        raise HTTPException(status_code=404, detail=f"Article '{slug}' not found")
+
+    try:
+        with _state_conn() as conn:
+            screenshots = _screenshot_rows(
+                conn, _article_titles_for_slug(conn, slug)
+            )
+    except Exception:
+        screenshots = []
+
+    from xteink_service.clippings import clippings_for_documents
+    detail = {k: article[k] for k in _ARTICLE_FIELDS
+              if k not in ("screenshot_count", "clipping_count")}
+    return {
+        **detail,
+        "screenshots": screenshots,
+        "clippings": clippings_for_documents(article["hashes"]),
+    }
 
 
 @router.get("/api/books/{slug}/screenshots")
@@ -284,34 +530,13 @@ async def list_screenshots(slug: str):
 
     Matches the book by its canonical slug (see ``booktitle``), so the screenshot
     folder name and a Calibre-style alias title resolve to the same book.
-
-    Stitched screenshots write ONE image but mark each constituent page as its
-    own row (all sharing one vault_png_path, needed for sync dedup). Collapse
-    them to a single gallery entry per image (the lowest-id row) so the same
-    stitched image isn't shown once per page.
     """
     try:
         with _state_conn() as conn:
-            titles = _book_titles_for_slug(conn, slug)
-            if not titles:
-                raise HTTPException(status_code=404, detail=f"Book '{slug}' not found")
-            ph = ",".join("?" for _ in titles)
-            rows = conn.execute(
-                f"""
-                SELECT * FROM synced_screenshots
-                WHERE book_title IN ({ph})
-                  AND id IN (
-                      SELECT MIN(id) FROM synced_screenshots
-                      WHERE book_title IN ({ph})
-                      GROUP BY COALESCE(vault_png_path, CAST(id AS TEXT))
-                  )
-                ORDER BY id
-                """,
-                titles + titles,
-            ).fetchall()
+            rows = _screenshot_rows(conn, _book_titles_for_slug(conn, slug))
         if not rows:
             raise HTTPException(status_code=404, detail=f"Book '{slug}' not found")
-        return [dict(r) for r in rows]
+        return rows
     except HTTPException:
         raise
     except Exception:
@@ -440,7 +665,7 @@ async def get_screenshot_image(screenshot_id: int):
     """Serve the PNG from the vault filesystem."""
     with _state_conn() as conn:
         row = conn.execute(
-            "SELECT vault_png_path FROM synced_screenshots WHERE id = ?",
+            "SELECT * FROM synced_screenshots WHERE id = ?",
             (screenshot_id,),
         ).fetchone()
     if not row:
@@ -450,7 +675,7 @@ async def get_screenshot_image(screenshot_id: int):
     if not vault_png_path:
         raise HTTPException(status_code=404, detail="No vault path stored for this screenshot")
 
-    png = _vault_path() / "Books" / vault_png_path
+    png = _vault_path() / _vault_root_of(row) / vault_png_path
     if not png.exists():
         raise HTTPException(status_code=404, detail=f"File not found on disk: {png}")
 
@@ -495,7 +720,6 @@ async def update_screenshot(screenshot_id: int, body: ScreenshotUpdate):
 @router.get("/api/reading-log")
 async def reading_log(limit: int = 100):
     """Recent KOReader progress updates with resolved titles."""
-    FINISHED = 0.95  # matches reading_stats: the first crossing finishes the book
     with _koreader_conn() as conn:
         rows = conn.execute(
             "SELECT * FROM progress_updates ORDER BY id DESC LIMIT ?", (limit,)
@@ -559,9 +783,11 @@ async def reading_stats():
     Reading volume is reported as PERCENT read — KOReader syncs percentages, not
     page numbers. Progress within a period = the current position minus the
     position at the period's start, counted only for books synced in that period.
-    """
-    FINISHED = 0.95  # >= this fraction counts a book as finished
 
+    Articles are counted separately: they are real reading, so their pages land
+    in ``pages_read``, but they must not inflate the book counters, and summing
+    the percentages of a dozen short articles says nothing useful.
+    """
     now = datetime.now()
     today = now.date()
     start_today = datetime(today.year, today.month, today.day)
@@ -575,59 +801,76 @@ async def reading_stats():
             "SELECT document, percentage, timestamp FROM progress_updates"
         ).fetchall()
 
+    try:
+        with _state_conn() as conn:
+            kinds = kinds_by_hash(conn)
+    except Exception:
+        kinds = {}
+
     by_doc: dict[str, list[tuple[int, float]]] = {}
     for r in rows:
         by_doc.setdefault(r["document"], []).append((r["timestamp"], r["percentage"]))
 
     pages_by_hash = _pages_by_hash()
 
-    started = finished = in_progress = 0
+    counts = {
+        "book": {"started": 0, "finished": 0, "in_progress": 0},
+        ARTICLE: {"started": 0, "finished": 0, "in_progress": 0},
+    }
     pct_today = pct_week = pct_month = 0.0
     pages_today = pages_week = pages_month = 0.0
-    done_today: set[str] = set()
-    done_week: set[str] = set()
-    done_month: set[str] = set()
-    done_year: set[str] = set()
+    # Completed within each period, per kind.
+    done: dict[str, dict[str, set[str]]] = {
+        kind: {"today": set(), "week": set(), "month": set(), "year": set()}
+        for kind in counts
+    }
 
     for doc, pts in by_doc.items():
+        kind = ARTICLE if kinds.get(doc) == ARTICLE else "book"
         max_now = max(pct for _, pct in pts)
         info = pages_by_hash.get(doc)
         total_pages = info["total_pages"] if info else 0
-        started += 1
+        counts[kind]["started"] += 1
         if max_now >= FINISHED:
-            finished += 1
+            counts[kind]["finished"] += 1
             # "Books read" = books COMPLETED within the period: the first sync
             # that reached the finished threshold.
             completed_at = min(ts for ts, pct in pts if pct >= FINISHED)
-            if completed_at >= ts_today:
-                done_today.add(doc)
-            if completed_at >= ts_week:
-                done_week.add(doc)
-            if completed_at >= ts_month:
-                done_month.add(doc)
-            if completed_at >= ts_year:
-                done_year.add(doc)
+            for period, since in (("today", ts_today), ("week", ts_week),
+                                  ("month", ts_month), ("year", ts_year)):
+                if completed_at >= since:
+                    done[kind][period].add(doc)
         else:
-            in_progress += 1
+            counts[kind]["in_progress"] += 1
 
         if any(ts >= ts_today for ts, _ in pts):
             before = [pct for ts, pct in pts if ts < ts_today]
             delta = max(0.0, max_now - (max(before) if before else 0.0))
-            pct_today += delta
             pages_today += delta * total_pages
+            if kind != ARTICLE:
+                pct_today += delta
         if any(ts >= ts_week for ts, _ in pts):
             before = [pct for ts, pct in pts if ts < ts_week]
             delta = max(0.0, max_now - (max(before) if before else 0.0))
-            pct_week += delta
             pages_week += delta * total_pages
+            if kind != ARTICLE:
+                pct_week += delta
         if any(ts >= ts_month for ts, _ in pts):
             before = [pct for ts, pct in pts if ts < ts_month]
             delta = max(0.0, max_now - (max(before) if before else 0.0))
-            pct_month += delta
             pages_month += delta * total_pages
+            if kind != ARTICLE:
+                pct_month += delta
+
+    def _completed(kind: str) -> dict:
+        return {
+            **{period: len(docs) for period, docs in done[kind].items()},
+            "all_time": counts[kind]["finished"],
+        }
 
     return {
-        "books": {"started": started, "in_progress": in_progress, "finished": finished},
+        "books": counts["book"],
+        "articles": counts[ARTICLE],
         "read_pct": {
             "today": round(pct_today * 100, 1),
             "week": round(pct_week * 100, 1),
@@ -638,13 +881,8 @@ async def reading_stats():
             "week": round(pages_week),
             "month": round(pages_month),
         },
-        "books_read": {
-            "today": len(done_today),
-            "week": len(done_week),
-            "month": len(done_month),
-            "year": len(done_year),
-            "all_time": finished,
-        },
+        "books_read": _completed("book"),
+        "articles_read": _completed(ARTICLE),
     }
 
 
@@ -694,19 +932,22 @@ async def list_aliases():
 
     `linked` marks rows whose book resolves to the same canonical title as
     another row: those hashes are kept in sync with each other across devices.
+    Articles are never linked, so they never carry the mark: see
+    ``koreader_sync._linked_documents``.
     """
     with _state_conn() as conn:
         rows = [dict(r) for r in conn.execute(
             "SELECT * FROM document_aliases ORDER BY title"
         )]
+        kinds = kinds_by_hash(conn)
     counts: dict[str, int] = {}
     for r in rows:
-        slug = canonical_book_slug(r["title"])
-        counts[slug] = counts.get(slug, 0) + 1
+        r["kind"] = kinds.get(r["hash"], "book")
+        r["canonical"] = canonical_book_slug(r["title"], r["kind"])
+        if r["kind"] != ARTICLE:
+            counts[r["canonical"]] = counts.get(r["canonical"], 0) + 1
     for r in rows:
-        slug = canonical_book_slug(r["title"])
-        r["canonical"] = slug
-        r["linked"] = counts.get(slug, 0) > 1
+        r["linked"] = r["kind"] != ARTICLE and counts.get(r["canonical"], 0) > 1
     return rows
 
 
@@ -757,13 +998,20 @@ class AliasBody(BaseModel):
 
 @router.put("/api/aliases/{doc_hash}")
 async def set_alias(doc_hash: str, body: AliasBody):
-    """Create or update a hash → title mapping."""
+    """Create or update a hash → title mapping.
+
+    INSERT OR REPLACE rewrites the whole row, so the content kind has to be
+    carried over explicitly or renaming an article would turn it into a book.
+    """
     with sqlite3.connect(_state_db()) as conn:
+        _ensure_alias_kind(conn)
         conn.execute(
             "INSERT OR REPLACE INTO document_aliases "
-            "(hash, title, filename, resolved_by, computed_at) VALUES (?,?,?,'manual',?)",
+            "(hash, title, filename, resolved_by, computed_at, kind) "
+            "VALUES (?,?,?,'manual',?,"
+            "COALESCE((SELECT kind FROM document_aliases WHERE hash = ?), 'book'))",
             (doc_hash, body.title, body.filename,
-             datetime.now(timezone.utc).isoformat()),
+             datetime.now(timezone.utc).isoformat(), doc_hash),
         )
     logger.info("Alias set: %s → %s", doc_hash[:12], body.title)
     return {"hash": doc_hash, "title": body.title}
@@ -803,7 +1051,10 @@ async def rebuild_vault():
 
         try:
             day = DateType.fromisoformat(sync_date)
-            vw.append_to_daily_note(book_title, day, embed_path, ocr_text)
+            vw.append_to_daily_note(
+                book_title, day, embed_path, ocr_text,
+                kind_for_vault_root(row.get("vault_root")),
+            )
             rebuilt += 1
         except Exception:
             pass
@@ -1027,8 +1278,9 @@ async def create_highlight(screenshot_id: int, body: HighlightIn):
     # Compute word bounding boxes from the vault PNG
     bbox_json = "[]"
     img_w = img_h = 0
+    vault_root = _vault_root_of(shot)
     if shot.get("vault_png_path"):
-        png_path = _vault_path() / "Books" / shot["vault_png_path"]
+        png_path = _vault_path() / vault_root / shot["vault_png_path"]
         if png_path.exists():
             bboxes, img_w, img_h = _find_text_bboxes(png_path, body.selected_text)
             import json
@@ -1047,7 +1299,7 @@ async def create_highlight(screenshot_id: int, body: HighlightIn):
         try:
             from xteink_service.vault_writer import VaultWriter, _sanitize
             book_slug = _sanitize(shot["book_title"])
-            note_path = vault / "Books" / f"{book_slug}.md"
+            note_path = vault / vault_root / f"{book_slug}.md"
             if note_path.exists():
                 content = note_path.read_text()
                 # Wrap the selected text with == == (Obsidian highlight syntax)

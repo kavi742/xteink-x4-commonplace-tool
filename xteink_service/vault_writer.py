@@ -4,6 +4,8 @@ import re
 from datetime import date, datetime, timezone
 from pathlib import Path
 
+from xteink_service.content_kind import vault_root_for
+
 logger = logging.getLogger(__name__)
 
 
@@ -35,15 +37,19 @@ class VaultWriter:
     # Screenshots                                                          #
     # ------------------------------------------------------------------ #
 
-    def write_screenshot(self, book_title: str, day: date, png_data: bytes, index: int) -> str:
+    def write_screenshot(
+        self, book_title: str, day: date, png_data: bytes, index: int,
+        kind: str = "book",
+    ) -> str:
         """
-        Write PNG bytes to Books/<book>/<date>-NN.png.
-        Returns the embed path used in the book note (e.g. 'Pastoral/2026-07-04-01.png').
+        Write PNG bytes to <root>/<book>/<date>-NN.png, where <root> is Books or
+        Articles. Returns the root-relative embed path used in the note
+        (e.g. 'Pastoral/2026-07-04-01.png').
         """
         date_str = day.strftime("%Y-%m-%d")
         filename = f"{date_str}-{index:02d}.png"
         book_slug = _sanitize(book_title)
-        book_dir = self.vault_path / "Books" / book_slug
+        book_dir = self.vault_path / vault_root_for(kind) / book_slug
         book_dir.mkdir(parents=True, exist_ok=True)
         (book_dir / filename).write_bytes(png_data)
         logger.debug("Wrote %s", book_dir / filename)
@@ -57,16 +63,18 @@ class VaultWriter:
         book_title: str,
         sync_date: str,
         ocr_text: str | None,
+        kind: str = "book",
     ) -> None:
         """
         Write a JSON sidecar alongside the PNG.
         Provides a DB-independent backup: the vault folder is self-contained.
         """
-        png_path = self.vault_path / "Books" / embed_path
+        png_path = self.vault_path / vault_root_for(kind) / embed_path
         meta = {
             "device_path": device_path,
             "content_hash": content_hash,
             "book_title": book_title,
+            "kind": kind,
             "sync_date": sync_date,
             "ocr_text": ocr_text,
             "archived_at": datetime.now(timezone.utc).isoformat(),
@@ -81,15 +89,16 @@ class VaultWriter:
         day: date,
         embed_path: str,
         ocr_text: str | None = None,
+        kind: str = "book",
     ) -> None:
         """
         Append a screenshot embed (and optional collapsible OCR callout) to
-        Books/<book>.md under a ## YYYY-MM-DD date heading.
+        <root>/<book>.md under a ## YYYY-MM-DD date heading.
         Creates the note with frontmatter if it doesn't exist.
         """
         date_str = day.strftime("%Y-%m-%d")
         book_slug = _sanitize(book_title)
-        note_path = self.vault_path / "Books" / f"{book_slug}.md"
+        note_path = self.vault_path / vault_root_for(kind) / f"{book_slug}.md"
 
         if not note_path.exists():
             note_path.parent.mkdir(parents=True, exist_ok=True)
@@ -224,10 +233,11 @@ class VaultWriter:
         progress: str | None = None,
         first_today_pct: float | None = None,
         device: str | None = None,
+        kind: str = "book",
     ) -> None:
         date_str = day.strftime("%Y-%m-%d")
         book_slug = _sanitize(title)
-        book_path = self.vault_path / "Books" / f"{book_slug}.md"
+        book_path = self.vault_path / vault_root_for(kind) / f"{book_slug}.md"
         date_heading = f"## {date_str}"
 
         loc = _parse_cfi(progress)

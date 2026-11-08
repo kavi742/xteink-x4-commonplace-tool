@@ -6,11 +6,42 @@
 
 export interface Book {
 	book_title: string;
+	slug: string;
+	/** Every Instapaper article collapses into one `articles` entry. */
+	kind: 'book' | 'articles';
 	screenshot_count: number;
+	article_count?: number;
 	last_synced: string | null;
 	last_date: string | null;
 	percentage_display: number | null;
 	last_read_at: number | null;
+}
+
+/** One article as listed by /api/articles. */
+export interface Article {
+	slug: string;
+	title: string;
+	hashes: string[];
+	screenshot_count: number;
+	clipping_count: number;
+	percentage_display: number | null;
+	last_read_at: number | null;
+	finished: boolean;
+	total_pages: number | null;
+	page: number | null;
+}
+
+export interface ArticleDetail {
+	slug: string;
+	title: string;
+	hashes: string[];
+	percentage_display: number | null;
+	last_read_at: number | null;
+	finished: boolean;
+	total_pages: number | null;
+	page: number | null;
+	screenshots: Screenshot[];
+	clippings: Clipping[];
 }
 
 export interface Screenshot {
@@ -74,10 +105,13 @@ export interface ReadingCalendarDay {
 }
 
 export interface ReadingStats {
+	/** books.*, books_read.* and read_pct.* exclude articles; pages_read.* includes them. */
 	books: { started: number; in_progress: number; finished: number };
 	read_pct: { today: number; week: number; month: number };
 	pages_read: { today: number; week: number; month: number };
 	books_read: { today: number; week: number; month: number; year: number; all_time: number };
+	articles?: { started: number; in_progress: number; finished: number };
+	articles_read?: { today: number; week: number; month: number; year: number; all_time: number };
 }
 
 export interface BookReadingStats {
@@ -140,6 +174,8 @@ export interface Clipping {
 	synced_at: string;
 	book_title: string;
 	screenshot_id: number | null;
+	/** Only /api/clippings carries this; the per-book endpoint omits it. */
+	kind?: 'book' | 'article';
 }
 
 export interface SearchResult extends Screenshot {
@@ -231,6 +267,11 @@ function createApi(customFetch: Fetch = fetch) {
 				get<HighlightWithMeta[]>(`/api/books/${encodeURIComponent(slug)}/highlights`),
 			clippings: (slug: string) =>
 				get<Clipping[]>(`/api/books/${encodeURIComponent(slug)}/clippings`),
+		},
+
+		articles: {
+			list: () => get<Article[]>('/api/articles'),
+			get: (slug: string) => get<ArticleDetail>(`/api/articles/${encodeURIComponent(slug)}`),
 		},
 
 		screenshots: {

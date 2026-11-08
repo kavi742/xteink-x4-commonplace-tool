@@ -2,7 +2,29 @@ import hashlib
 import logging
 import sqlite3
 
+from xteink_service.content_kind import kind_for_device_path
+
 logger = logging.getLogger(__name__)
+
+
+def _backfill_alias_kinds(conn: sqlite3.Connection) -> None:
+    """Classify pre-existing aliases that recorded a full device path.
+
+    Most rows only stored a bare filename, which carries no directory and so no
+    evidence either way. Those stay 'book' rather than being guessed at.
+    """
+    rows = conn.execute(
+        "SELECT hash, filename FROM document_aliases WHERE filename LIKE '%/%'"
+    ).fetchall()
+    articles = [
+        (h,) for h, filename in rows
+        if kind_for_device_path(filename) == "article"
+    ]
+    if articles:
+        conn.executemany(
+            "UPDATE document_aliases SET kind = 'article' WHERE hash = ?", articles
+        )
+        logger.info("Backfilled %d alias(es) as articles", len(articles))
 
 
 class SyncState:
@@ -27,6 +49,7 @@ class SyncState:
                     vault_png_path TEXT    DEFAULT '',
                     ocr_corrected  TEXT,
                     user_notes     TEXT,
+                    vault_root     TEXT    DEFAULT 'Books',
                     UNIQUE(device_path, content_hash)
                 )
             """)
@@ -59,6 +82,7 @@ class SyncState:
                 ("vault_png_path", "TEXT DEFAULT ''"),
                 ("ocr_corrected",  "TEXT"),
                 ("user_notes",     "TEXT"),
+                ("vault_root",     "TEXT DEFAULT 'Books'"),
             ]:
                 try:
                     conn.execute(f"ALTER TABLE synced_screenshots ADD COLUMN {col} {typedef}")
@@ -71,9 +95,22 @@ class SyncState:
                     title        TEXT NOT NULL,
                     filename     TEXT DEFAULT '',
                     resolved_by  TEXT DEFAULT 'manual',
-                    computed_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    computed_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    kind         TEXT DEFAULT 'book'
                 )
             """)
+            try:
+                conn.execute(
+                    "ALTER TABLE document_aliases ADD COLUMN kind TEXT DEFAULT 'book'"
+                )
+            except Exception:
+                pass  # column already exists
+            else:
+                # Only reachable the one time the column is added.
+                _backfill_alias_kinds(conn)
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_aliases_kind ON document_aliases(kind)"
+            )
 
     # ------------------------------------------------------------------ #
     # Screenshot dedup                                                     #
@@ -106,13 +143,16 @@ class SyncState:
         sync_date: str = "",
         ocr_text: str | None = None,
         vault_png_path: str = "",
+        vault_root: str = "Books",
     ) -> None:
         with sqlite3.connect(self.db_path) as conn:
             conn.execute(
                 "INSERT OR IGNORE INTO synced_screenshots "
-                "(device_path, content_hash, book_title, sync_date, ocr_text, vault_png_path) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (device_path, content_hash, book_title, sync_date, ocr_text, vault_png_path),
+                "(device_path, content_hash, book_title, sync_date, ocr_text, "
+                "vault_png_path, vault_root) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (device_path, content_hash, book_title, sync_date, ocr_text,
+                 vault_png_path, vault_root),
             )
         logger.debug("Marked synced: %s", device_path.split('/')[-1])
 
@@ -181,9 +221,18 @@ class SyncState:
             ).fetchone()
         return row[0] if row else None
 
+    def get_kind(self, doc_hash: str) -> str:
+        """Content kind for a progress hash, defaulting to 'book'."""
+        with sqlite3.connect(self.db_path) as conn:
+            row = conn.execute(
+                "SELECT kind FROM document_aliases WHERE hash = ?",
+                (doc_hash,),
+            ).fetchone()
+        return (row[0] if row else None) or "book"
+
     def set_title(
         self, doc_hash: str, title: str, filename: str = "",
-        resolved_by: str = "manual",
+        resolved_by: str = "manual", kind: str = "book",
     ) -> None:
         """Map a progress hash to a title, leaving any existing mapping alone.
 
@@ -193,8 +242,8 @@ class SyncState:
         with sqlite3.connect(self.db_path) as conn:
             conn.execute(
                 "INSERT OR IGNORE INTO document_aliases "
-                "(hash, title, filename, resolved_by) VALUES (?,?,?,?)",
-                (doc_hash, title, filename, resolved_by),
+                "(hash, title, filename, resolved_by, kind) VALUES (?,?,?,?,?)",
+                (doc_hash, title, filename, resolved_by, kind),
             )
 
     # ------------------------------------------------------------------ #

@@ -47,6 +47,8 @@ from typing import Annotated, Optional
 from fastapi import Depends, FastAPI, Header, HTTPException, status
 from pydantic import BaseModel, ConfigDict
 
+from xteink_service import content_kind
+
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="xteink-service", version="1.0.0")
@@ -541,10 +543,12 @@ def _record_client_title(update: ProgressIn) -> None:
         return
     try:
         from xteink_service.state import SyncState
+        filename = (update.metadata.filename or "") if update.metadata else ""
         SyncState(os.getenv("STATE_DB", "/data/state/state.db")).set_title(
             update.document, title,
-            filename=(update.metadata.filename or "") if update.metadata else "",
+            filename=filename,
             resolved_by="metadata",
+            kind=content_kind.kind_for_device_path(filename),
         )
     except Exception as exc:
         logger.debug("Could not store client title for %s: %s",
@@ -564,9 +568,12 @@ async def _write_progress_to_vault(update: ProgressIn) -> None:
     # during File Transfer mode, when the file listing API is available.
     title = update.resolved_title() or None
     state_db = os.getenv("STATE_DB", "/data/state/state.db")
+    kind = content_kind.BOOK
     try:
         from xteink_service.state import SyncState
-        title = SyncState(state_db).get_title(update.document) or title
+        state = SyncState(state_db)
+        title = state.get_title(update.document) or title
+        kind = state.get_kind(update.document)
     except Exception:
         pass
     if not title:
@@ -611,7 +618,8 @@ async def _write_progress_to_vault(update: ProgressIn) -> None:
         vw.update_book_timeline(title, update.resolved_author(), today, pct,
                                 progress=update.progress,
                                 first_today_pct=first_today_pct,
-                                device=device)
+                                device=device,
+                                kind=kind)
         logger.info("Vault: wrote progress for %s (%.1f%%) from %s",
                     title, pct, update.device or "unknown device")
         _notify(f"Reading: {title} — {pct:.1f}%")
@@ -645,16 +653,27 @@ def _linked_documents(document: str) -> list[str]:
     byte-identical files with identical names, so hashes are grouped by the book
     title they resolve to instead. Mapping a hash to a title (auto-scan, KOReader
     metadata, or by hand at /aliases) is therefore what links two devices.
+
+    Articles are never linked. Their titles are arbitrary prose that can slug
+    together, and pushing one article's position onto another is worse than
+    having no cross-device sync for them at all.
     """
     try:
         state_db = os.getenv("STATE_DB", "/data/state/state.db")
         with sqlite3.connect(state_db) as conn:
-            rows = conn.execute("SELECT hash, title FROM document_aliases").fetchall()
+            rows = content_kind.alias_rows(conn)
     except Exception:
         return []
 
+    kinds = {h: kind for h, _title, kind in rows}
+    if kinds.get(document) == content_kind.ARTICLE:
+        return [document]
+
     from xteink_service.booktitle import canonical_book_slug
-    by_hash = {h: canonical_book_slug(t) for h, t in rows}
+    by_hash = {
+        h: canonical_book_slug(t)
+        for h, t, kind in rows if kind != content_kind.ARTICLE
+    }
     slug = by_hash.get(document)
     if not slug:
         return []

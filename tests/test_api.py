@@ -9,6 +9,7 @@ Covers: /status, /api/books, /api/books/{slug}/screenshots,
 import io
 import os
 import sqlite3
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -45,6 +46,7 @@ def api_env(tmp_path, monkeypatch):
                 book_title TEXT DEFAULT '', sync_date TEXT DEFAULT '',
                 ocr_text TEXT, vault_png_path TEXT DEFAULT '',
                 ocr_corrected TEXT, user_notes TEXT,
+                vault_root TEXT DEFAULT 'Books',
                 UNIQUE(device_path, content_hash)
             )
         """)
@@ -52,7 +54,8 @@ def api_env(tmp_path, monkeypatch):
             CREATE TABLE document_aliases (
                 hash TEXT PRIMARY KEY, title TEXT NOT NULL,
                 filename TEXT DEFAULT '', resolved_by TEXT DEFAULT 'manual',
-                computed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                computed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                kind TEXT DEFAULT 'book'
             )
         """)
 
@@ -70,9 +73,10 @@ def api_env(tmp_path, monkeypatch):
 
 
 def _seed_screenshot(state_db: str, vault: Path,
-                     book: str = "Pastoral", n: int = 1) -> int:
+                     book: str = "Pastoral", n: int = 1,
+                     root: str = "Books") -> int:
     """Insert a screenshot row and write a real PNG to the vault. Returns row id."""
-    book_dir = vault / "Books" / book
+    book_dir = vault / root / book
     book_dir.mkdir(parents=True, exist_ok=True)
     filename = f"2026-07-04-{n:02d}.png"
     png_path = book_dir / filename
@@ -84,19 +88,21 @@ def _seed_screenshot(state_db: str, vault: Path,
     with sqlite3.connect(state_db) as conn:
         cur = conn.execute(
             "INSERT INTO synced_screenshots "
-            "(device_path, content_hash, book_title, sync_date, ocr_text, vault_png_path) "
-            "VALUES (?,?,?,?,?,?)",
+            "(device_path, content_hash, book_title, sync_date, ocr_text, "
+            "vault_png_path, vault_root) "
+            "VALUES (?,?,?,?,?,?,?)",
             (f"/screenshots/{book}/shot{n}.bmp", f"hash{n:03d}",
-             book, "2026-07-04", f"OCR text for shot {n}", embed),
+             book, "2026-07-04", f"OCR text for shot {n}", embed, root),
         )
         return cur.lastrowid
 
 
-def _seed_alias(state_db: str, doc_hash: str, title: str) -> None:
+def _seed_alias(state_db: str, doc_hash: str, title: str,
+                kind: str = "book") -> None:
     with sqlite3.connect(state_db) as conn:
         conn.execute(
-            "INSERT INTO document_aliases (hash, title) VALUES (?,?)",
-            (doc_hash, title),
+            "INSERT INTO document_aliases (hash, title, kind) VALUES (?,?,?)",
+            (doc_hash, title, kind),
         )
 
 
@@ -437,3 +443,256 @@ def test_vault_rebuild(client, api_env):
     r = client.post("/api/vault/rebuild")
     assert r.status_code == 200
     assert r.json()["rebuilt_notes"] == 2
+
+
+# ------------------------------------------------------------------ #
+# Articles                                                             #
+# ------------------------------------------------------------------ #
+
+def _seed_article(api_env, title: str, doc_hash: str,
+                  pct: float | None = None, ts: int = 1790531387,
+                  screenshots: int = 0) -> None:
+    """An article alias plus optional progress and Articles/ screenshots."""
+    _seed_alias(api_env["state_db"], doc_hash, title, kind="article")
+    if pct is not None:
+        with sqlite3.connect(api_env["koreader_db"]) as conn:
+            conn.execute(
+                "INSERT INTO progress_updates "
+                "(document, progress, percentage, timestamp) VALUES (?,?,?,?)",
+                (doc_hash, "/body/p[1]", pct, ts),
+            )
+    for n in range(1, screenshots + 1):
+        _seed_screenshot(api_env["state_db"], api_env["vault"], title, n,
+                         root="Articles")
+
+
+def test_books_list_collapses_articles_into_one_entry(client, api_env):
+    _seed_screenshot(api_env["state_db"], api_env["vault"], "Pastoral", 1)
+    _seed_article(api_env, "How to Do Nothing", "art1", pct=0.4, screenshots=2)
+    _seed_article(api_env, "The Attention Economy", "art2", pct=0.98,
+                  ts=1790531400, screenshots=1)
+    _seed_article(api_env, "A Third Piece", "art3", pct=0.1, ts=1790531300)
+
+    entries = {b["book_title"]: b for b in client.get("/api/books").json()}
+    assert set(entries) == {"Pastoral", "Articles"}
+
+    articles = entries["Articles"]
+    assert articles["slug"] == "articles"
+    assert articles["kind"] == "articles"
+    assert articles["article_count"] == 3
+    assert articles["screenshot_count"] == 3
+    assert articles["percentage_display"] is None
+    assert articles["last_read_at"] == 1790531400
+    assert entries["Pastoral"]["kind"] == "book"
+    assert entries["Pastoral"]["slug"] == "pastoral"
+
+
+def test_books_list_has_no_articles_entry_without_articles(client, api_env):
+    _seed_screenshot(api_env["state_db"], api_env["vault"], "Pastoral", 1)
+    books = client.get("/api/books").json()
+    assert [b["book_title"] for b in books] == ["Pastoral"]
+    assert "article_count" not in books[0]
+
+
+def test_list_articles_shape_and_order(client, api_env):
+    _seed_article(api_env, "How to Do Nothing", "art1", pct=0.4,
+                  ts=1790531300, screenshots=2)
+    _seed_article(api_env, "The Attention Economy", "art2", pct=0.98,
+                  ts=1790531400)
+    _seed_article(api_env, "Never Opened", "art3")  # alias only: no activity
+
+    articles = client.get("/api/articles").json()
+    assert [a["title"] for a in articles] == [
+        "The Attention Economy", "How to Do Nothing",
+    ]
+    assert set(articles[0]) == {
+        "slug", "title", "hashes", "screenshot_count", "clipping_count",
+        "percentage_display", "last_read_at", "finished", "total_pages", "page",
+    }
+    first, second = articles
+    assert first["finished"] is True
+    assert first["percentage_display"] == 98.0
+    assert second["finished"] is False
+    assert second["screenshot_count"] == 2
+    assert second["slug"] == "how-to-do-nothing"
+    assert second["hashes"] == ["art1"]
+    assert second["clipping_count"] == 0
+
+
+def test_get_article_detail(client, api_env):
+    _seed_article(api_env, "How to Do Nothing", "art1", pct=0.4, screenshots=2)
+
+    body = client.get("/api/articles/how-to-do-nothing").json()
+    assert set(body) == {
+        "slug", "title", "hashes", "percentage_display", "last_read_at",
+        "finished", "total_pages", "page", "screenshots", "clippings",
+    }
+    assert body["title"] == "How to Do Nothing"
+    assert len(body["screenshots"]) == 2
+    assert body["screenshots"][0]["book_title"] == "How to Do Nothing"
+    assert body["clippings"] == []
+
+
+def test_get_article_unknown_slug(client, api_env):
+    assert client.get("/api/articles/nope").status_code == 404
+
+
+def test_article_titles_that_collide_as_books_stay_separate(client, api_env):
+    """Book-mode slugging would merge these two into one article."""
+    _seed_article(api_env, "Attention - The Atlantic", "art1", pct=0.3)
+    _seed_article(api_env, "Attention - Wired", "art2", pct=0.6, ts=1790531400)
+
+    slugs = {a["slug"] for a in client.get("/api/articles").json()}
+    assert slugs == {"attention-the-atlantic", "attention-wired"}
+
+
+def test_book_endpoints_do_not_serve_the_reserved_articles_slug(client, api_env):
+    _seed_article(api_env, "How to Do Nothing", "art1", pct=0.4, screenshots=1)
+
+    assert client.get("/api/books/articles/screenshots").status_code == 404
+    assert client.get("/api/books/articles/reading-calendar").json() == []
+    assert client.get("/api/books/articles/highlights").json() == []
+    assert client.get("/api/books/articles/reading-stats").json()["total_pages"] is None
+
+
+def test_article_screenshots_are_not_served_as_a_book(client, api_env):
+    _seed_article(api_env, "How to Do Nothing", "art1", pct=0.4, screenshots=1)
+    assert client.get("/api/books/How to Do Nothing/screenshots").status_code == 404
+
+
+def test_article_image_is_served_from_the_articles_folder(client, api_env):
+    _seed_article(api_env, "How to Do Nothing", "art1", pct=0.4, screenshots=1)
+    shot = client.get("/api/articles/how-to-do-nothing").json()["screenshots"][0]
+
+    r = client.get(f"/api/screenshots/{shot['id']}/image")
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "image/png"
+
+
+def test_put_alias_keeps_the_article_kind(client, api_env):
+    _seed_alias(api_env["state_db"], "art1", "How to Do Nothing", kind="article")
+    assert client.put("/api/aliases/art1", json={"title": "How To Do Nothing"}).status_code == 200
+
+    by_hash = {a["hash"]: a for a in client.get("/api/aliases").json()}
+    assert by_hash["art1"]["kind"] == "article"
+
+
+def test_aliases_never_mark_articles_as_linked(client, api_env):
+    _seed_alias(api_env["state_db"], "art1", "Attention - The Atlantic", kind="article")
+    _seed_alias(api_env["state_db"], "art2", "Attention - Wired", kind="article")
+
+    assert all(not a["linked"] for a in client.get("/api/aliases").json())
+
+
+# ------------------------------------------------------------------ #
+# /api/reading-stats                                                   #
+# ------------------------------------------------------------------ #
+
+def _seed_finished_today(api_env, doc_hash: str, title: str, kind: str,
+                         total_pages: int) -> None:
+    _seed_alias(api_env["state_db"], doc_hash, title, kind=kind)
+    with sqlite3.connect(api_env["state_db"]) as conn:
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS book_pages ("
+            "title TEXT PRIMARY KEY, total_pages INTEGER NOT NULL, "
+            "source TEXT DEFAULT 'openlibrary', updated_at TIMESTAMP)"
+        )
+        conn.execute(
+            "INSERT INTO book_pages (title, total_pages, source) VALUES (?,?,?)",
+            (title, total_pages, "estimate"),
+        )
+    now = int(datetime.now().timestamp())
+    with sqlite3.connect(api_env["koreader_db"]) as conn:
+        conn.execute(
+            "INSERT INTO progress_updates "
+            "(document, progress, percentage, timestamp) VALUES (?,?,?,?)",
+            (doc_hash, "/body/p[1]", 1.0, now),
+        )
+
+
+def test_reading_stats_separates_articles_from_books(client, api_env):
+    _seed_finished_today(api_env, "b1", "Pastoral", "book", 200)
+    _seed_finished_today(api_env, "a1", "How to Do Nothing", "article", 20)
+
+    stats = client.get("/api/reading-stats").json()
+
+    assert stats["books"] == {"started": 1, "in_progress": 0, "finished": 1}
+    assert stats["articles"] == {"started": 1, "in_progress": 0, "finished": 1}
+    assert stats["books_read"]["today"] == 1
+    assert stats["books_read"]["all_time"] == 1
+    assert stats["articles_read"] == {
+        "today": 1, "week": 1, "month": 1, "year": 1, "all_time": 1,
+    }
+    # The article's pages count as reading; its percentage does not.
+    assert stats["pages_read"]["today"] == 220
+    assert stats["read_pct"]["today"] == 100.0
+
+
+def test_reading_stats_without_articles_is_unchanged(client, api_env):
+    _seed_finished_today(api_env, "b1", "Pastoral", "book", 200)
+
+    stats = client.get("/api/reading-stats").json()
+    assert stats["articles"] == {"started": 0, "in_progress": 0, "finished": 0}
+    assert stats["articles_read"]["all_time"] == 0
+    assert stats["pages_read"]["today"] == 200
+    assert stats["books_read"]["today"] == 1
+
+
+# ------------------------------------------------------------------ #
+# Backward compatibility                                               #
+# ------------------------------------------------------------------ #
+
+def test_api_reads_a_database_without_the_new_columns(tmp_path, monkeypatch):
+    """A deployment that has not run the migration yet must still serve."""
+    state_db = str(tmp_path / "old-state.db")
+    koreader_db = str(tmp_path / "old-koreader.db")
+    monkeypatch.setenv("STATE_DB", state_db)
+    monkeypatch.setenv("KOREADER_DB", koreader_db)
+    monkeypatch.setenv("VAULT_PATH", str(tmp_path / "vault"))
+
+    with sqlite3.connect(state_db) as conn:
+        conn.execute("""
+            CREATE TABLE synced_screenshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                device_path TEXT NOT NULL, content_hash TEXT NOT NULL,
+                synced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                book_title TEXT DEFAULT '', sync_date TEXT DEFAULT '',
+                ocr_text TEXT, vault_png_path TEXT DEFAULT '',
+                ocr_corrected TEXT, user_notes TEXT,
+                UNIQUE(device_path, content_hash)
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE document_aliases (
+                hash TEXT PRIMARY KEY, title TEXT NOT NULL,
+                filename TEXT DEFAULT '', resolved_by TEXT DEFAULT 'manual',
+                computed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.execute(
+            "INSERT INTO synced_screenshots (device_path, content_hash, book_title, "
+            "vault_png_path) VALUES ('/screenshots/Pastoral/a.bmp', 'h1', "
+            "'Pastoral', 'Pastoral/2026-07-04-01.png')"
+        )
+        conn.execute("INSERT INTO document_aliases (hash, title) VALUES ('h1', 'Pastoral')")
+    with sqlite3.connect(koreader_db) as conn:
+        conn.execute("""
+            CREATE TABLE progress_updates (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                document TEXT NOT NULL, progress TEXT, percentage REAL,
+                device TEXT, device_id TEXT, title TEXT, author TEXT,
+                timestamp INTEGER DEFAULT (strftime('%s','now'))
+            )
+        """)
+        conn.execute(
+            "INSERT INTO progress_updates (document, percentage) VALUES ('h1', 0.5)"
+        )
+
+    from xteink_service.koreader_sync import app
+    c = TestClient(app)
+    books = c.get("/api/books").json()
+    assert [b["book_title"] for b in books] == ["Pastoral"]
+    assert books[0]["kind"] == "book"
+    assert c.get("/api/articles").json() == []
+    assert c.get("/api/reading-stats").json()["articles"]["started"] == 0
+    assert c.get("/api/books/Pastoral/screenshots").status_code == 200

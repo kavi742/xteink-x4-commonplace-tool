@@ -40,3 +40,34 @@ def test_only_last_author_segment_is_stripped():
     assert canonical_book_slug("Butcher's Crossing - (a novel) - John Williams") == (
         "butcher-s-crossing-a-novel"
     )
+
+
+# ------------------------------------------------------------------ #
+# Article mode                                                         #
+# ------------------------------------------------------------------ #
+
+@pytest.mark.parametrize("title, expected", [
+    # Article titles are prose, so nothing is stripped or reordered.
+    ("Attention - The Atlantic", "attention-the-atlantic"),
+    ("Attention - Wired", "attention-wired"),
+    ("Hidden Keys, The", "hidden-keys-the"),
+    ("How to Do Nothing", "how-to-do-nothing"),
+    ("How-to-Do-Nothing", "how-to-do-nothing"),
+    ("", ""),
+    (None, ""),
+])
+def test_article_slug_keeps_the_whole_title(title, expected):
+    assert canonical_book_slug(title, "article") == expected
+
+
+def test_article_mode_separates_titles_book_mode_would_merge():
+    """Two unrelated articles must not collapse onto one slug."""
+    a, b = "Attention - The Atlantic", "Attention - Wired"
+    assert canonical_book_slug(a) == canonical_book_slug(b) == "attention"
+    assert canonical_book_slug(a, "article") != canonical_book_slug(b, "article")
+
+
+def test_book_mode_is_the_default():
+    assert canonical_book_slug("Ring - Andre Alexis") == canonical_book_slug(
+        "Ring - Andre Alexis", "book"
+    )

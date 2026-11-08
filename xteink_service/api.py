@@ -24,10 +24,10 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from pydantic import BaseModel
 
-from xteink_service import logbuffer, search_index, undo
+from xteink_service import export, logbuffer, resurface, search_index, undo
 from xteink_service.booktitle import canonical_book_slug
 from xteink_service.content_kind import (
     ARTICLE,
@@ -1154,6 +1154,46 @@ async def list_book_highlights(slug: str):
         return []
 
 
+# ------------------------------------------------------------------ #
+# Export                                                               #
+# ------------------------------------------------------------------ #
+
+@router.get("/api/books/{slug}/export")
+async def export_book(
+    slug: str,
+    format: str = "md",
+    include: str = ",".join(export.DEFAULT_INCLUDE),
+    group: str = "auto",
+):
+    """One book's passages as Markdown, JSON, or CSV."""
+    if format not in export.FORMATS:
+        raise HTTPException(
+            status_code=400, detail=f"format must be one of {', '.join(export.FORMATS)}"
+        )
+    if group not in export.GROUP_MODES:
+        raise HTTPException(
+            status_code=400, detail=f"group must be one of {', '.join(export.GROUP_MODES)}"
+        )
+    wanted = [part.strip() for part in include.split(",") if part.strip()]
+    # A typo must not silently export less than the caller expected.
+    unknown = [part for part in wanted if part not in export.INCLUDES]
+    if unknown:
+        raise HTTPException(status_code=400, detail=f"unknown include: {', '.join(unknown)}")
+
+    try:
+        body, media_type, filename = export.build(_state_db(), slug, wanted, format, group)
+    except LookupError:
+        raise HTTPException(status_code=404, detail="No such book")
+
+    if format == "json":
+        return body
+    return Response(
+        content=body,
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @router.get("/api/search")
 async def search(
     q: str = "",
@@ -1475,6 +1515,51 @@ async def run_undo(body: UndoIn):
 async def list_recent_undo(limit: int = Query(default=5, ge=1, le=20)):
     """Still-actionable undo entries, so a toast survives a reload."""
     return {"items": undo.recent(limit)}
+
+
+# ------------------------------------------------------------------ #
+# Resurfacing — "on this day" and the review queue                     #
+# ------------------------------------------------------------------ #
+
+class ReviewSeenIn(BaseModel):
+    rating: str = "good"
+
+
+@router.get("/api/on-this-day")
+async def on_this_day(
+    day: str = Query(default="", alias="date"),
+    limit: int = Query(default=50, ge=1, le=200),
+):
+    """Passages captured on this calendar day in previous years."""
+    try:
+        when = datetime.strptime(day, "%Y-%m-%d").date() if day else date.today()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="date must be YYYY-MM-DD")
+    return resurface.on_this_day(_state_db(), when, limit)
+
+
+@router.get("/api/review")
+async def review_queue(
+    strategy: str = "spaced",
+    limit: int = Query(default=10, ge=1, le=50),
+    kinds: str = ",".join(resurface.DEFAULT_REVIEW_KINDS),
+    seed: str = "",
+):
+    """A bounded resurfacing queue, newest-due or shuffled."""
+    wanted = [part.strip() for part in kinds.split(",") if part.strip()]
+    try:
+        return resurface.review(_state_db(), strategy, wanted, limit, seed)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.post("/api/review/{kind}/{ref_id}/seen")
+async def review_seen(kind: str, ref_id: int, body: ReviewSeenIn):
+    """Record that one item was reviewed and advance its schedule."""
+    try:
+        return resurface.mark_seen(_state_db(), kind, ref_id, body.rating)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 # ------------------------------------------------------------------ #

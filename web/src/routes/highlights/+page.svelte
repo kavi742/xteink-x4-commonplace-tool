@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { api } from '$lib/api';
+	import ExportMenu from '$lib/components/ExportMenu.svelte';
 	import { panel } from '$lib/panel.svelte';
 	import { undo } from '$lib/undo.svelte';
 	import type { HighlightWithMeta } from '$lib/api';
@@ -40,6 +41,9 @@
 			<p class="date-heading">
 				<a href="/books/{encodeURIComponent(book)}" style="color:inherit">{book}</a>
 				<span style="font-weight:400;margin-left:.5rem">({items.length})</span>
+				<span style="float:right">
+					<ExportMenu slug={book} defaultInclude={['highlights']} />
+				</span>
 			</p>
 			<div style="display:flex;flex-direction:column;gap:.5rem">
 				{#each items as h}

@@ -292,6 +292,101 @@ export interface UndoRunResponse {
 	result: Record<string, unknown>;
 }
 
+export type ExportFormat = 'md' | 'json' | 'csv';
+export type ExportInclude = 'highlights' | 'clippings' | 'notes' | 'writing';
+
+/** One citation inside a writing entry, carried verbatim in the JSON export. */
+export interface ExportRef {
+	anchor: string;
+	id: number;
+	kind: string;
+	ref_id: number;
+	document: string | null;
+	snapshot: string;
+	image_path: string | null;
+	position: string;
+	source_state: string;
+}
+
+export interface ExportItem {
+	kind: 'highlight' | 'clipping' | 'note' | 'writing';
+	id: number;
+	date: string;
+	text?: string;
+	chapter?: string;
+	page_label?: string;
+	note?: string | null;
+	screenshot_id?: number | null;
+	/** Writing entries only. `body` keeps its anchors; `body_expanded` resolves them. */
+	title?: string;
+	body?: string;
+	body_expanded?: string;
+	position_pct?: number | null;
+	refs?: ExportRef[];
+}
+
+export interface ExportGroup {
+	label: string;
+	items: ExportItem[];
+}
+
+export interface BookExport {
+	book_slug: string;
+	book_title: string;
+	generated_at: string;
+	include: ExportInclude[];
+	grouped_by: 'chapter' | 'date';
+	counts: Record<ExportInclude, number>;
+	groups: ExportGroup[];
+}
+
+/** A passage resurfaced by "on this day" or the review queue. */
+export interface ResurfacedItem {
+	kind: 'screenshot' | 'highlight' | 'clipping';
+	ref_id: number;
+	screenshot_id: number | null;
+	book_title: string;
+	book_slug: string;
+	date: string;
+	text: string;
+}
+
+export interface OnThisDayYear {
+	year: number;
+	years_ago: number;
+	items: ResurfacedItem[];
+}
+
+export interface OnThisDayResponse {
+	date: string;
+	total: number;
+	years: OnThisDayYear[];
+}
+
+export type ReviewStrategy = 'spaced' | 'random';
+
+export interface ReviewItem extends ResurfacedItem {
+	shown_count: number;
+	last_shown: string | null;
+	next_due: string;
+}
+
+export interface ReviewResponse {
+	strategy: ReviewStrategy;
+	limit: number;
+	kinds: string[];
+	total_candidates: number;
+	items: ReviewItem[];
+}
+
+export interface ReviewSeenResponse {
+	kind: string;
+	ref_id: number;
+	shown_count: number;
+	interval_days: number;
+	next_due: string;
+}
+
 export interface TbrBook {
 	id: number;
 	title: string;
@@ -364,6 +459,20 @@ function createApi(customFetch?: Fetch) {
 		return res.json() as Promise<T>;
 	}
 
+	// A download is a plain anchor at this URL so the browser honours
+	// Content-Disposition; only "copy as JSON" goes through fetch.
+	function exportUrl(
+		slug: string,
+		opts: { format: ExportFormat; include: ExportInclude[]; group?: string },
+	) {
+		const params = new URLSearchParams({
+			format: opts.format,
+			include: opts.include.join(','),
+			group: opts.group ?? 'auto',
+		});
+		return `/api/books/${encodeURIComponent(slug)}/export?${params}`;
+	}
+
 	return {
 		status: () => get<StatusResponse>('/status'),
 
@@ -379,6 +488,9 @@ function createApi(customFetch?: Fetch) {
 				get<HighlightWithMeta[]>(`/api/books/${encodeURIComponent(slug)}/highlights`),
 			clippings: (slug: string) =>
 				get<Clipping[]>(`/api/books/${encodeURIComponent(slug)}/clippings`),
+			exportUrl,
+			exportJson: (slug: string, include: ExportInclude[]) =>
+				get<BookExport>(exportUrl(slug, { format: 'json', include })),
 		},
 
 		articles: {
@@ -451,6 +563,31 @@ function createApi(customFetch?: Fetch) {
 		},
 
 		reindexSearch: () => post<SearchReindex>('/api/search/reindex', {}),
+
+		onThisDay: (date?: string) =>
+			get<OnThisDayResponse>(
+				`/api/on-this-day${date ? `?date=${encodeURIComponent(date)}` : ''}`,
+			),
+
+		review: (
+			opts: {
+				strategy?: ReviewStrategy;
+				limit?: number;
+				kinds?: string[];
+				seed?: string;
+			} = {},
+		) => {
+			const params = new URLSearchParams({
+				strategy: opts.strategy ?? 'spaced',
+				limit: String(opts.limit ?? 10),
+			});
+			if (opts.kinds?.length) params.set('kinds', opts.kinds.join(','));
+			if (opts.seed) params.set('seed', opts.seed);
+			return get<ReviewResponse>(`/api/review?${params}`);
+		},
+
+		reviewSeen: (kind: string, refId: number, rating: 'good' | 'again') =>
+			post<ReviewSeenResponse>(`/api/review/${kind}/${refId}/seen`, { rating }),
 
 		tbr: {
 			list: () => get<TbrBook[]>('/api/tbr'),

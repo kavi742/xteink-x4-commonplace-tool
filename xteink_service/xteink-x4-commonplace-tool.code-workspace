@@ -1,0 +1,20 @@
+{
+	"folders": [
+		{
+			"path": ".."
+		},
+		{
+			"name": "crosspoint-reader",
+			"path": "../../../../../../home/ghostbird/crosspoint-reader"
+		},
+		{
+			"name": "bookorbit",
+			"path": "../../../../../../home/ghostbird/bookorbit"
+		},
+		{
+			"name": "instapaper.crosspoint-plugin",
+			"path": "../../../../../../home/ghostbird/instapaper.crosspoint-plugin"
+		}
+	],
+	"settings": {}
+}

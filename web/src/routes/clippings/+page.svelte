@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { api } from '$lib/api';
 	import ClippingCard from '$lib/components/ClippingCard.svelte';
+	import ExportMenu from '$lib/components/ExportMenu.svelte';
 	import { undo } from '$lib/undo.svelte';
 	import type { Clipping } from '$lib/api';
 
@@ -50,6 +51,11 @@
 					<span>{g.title}</span>
 				{/if}
 				<span style="font-weight:400;margin-left:.5rem">({g.items.length})</span>
+				{#if g.mapped && g.kind === 'book'}
+					<span style="float:right">
+						<ExportMenu slug={g.title} defaultInclude={['clippings']} />
+					</span>
+				{/if}
 			</p>
 			<div style="display:flex;flex-direction:column;gap:.5rem">
 				{#each g.items as c}

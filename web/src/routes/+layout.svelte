@@ -35,6 +35,7 @@
 		{ href: '/tbr',        label: 'TBR' },
 		{ href: '/highlights', label: 'Highlights' },
 		{ href: '/clippings',  label: 'Clippings' },
+		{ href: '/review',     label: 'Review' },
 		{ href: '/aliases',    label: 'Aliases' },
 		{ href: '/trash',      label: 'Trash' },
 	];

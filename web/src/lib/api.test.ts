@@ -259,3 +259,122 @@ describe('api.undo', () => {
 		expect(spy).toHaveBeenCalledWith('/api/undo/recent?limit=5');
 	});
 });
+
+// ------------------------------------------------------------------ //
+// /api/books/{slug}/export                                             //
+// ------------------------------------------------------------------ //
+
+describe('api.books.exportUrl', () => {
+	it('builds the query string for each format without fetching', () => {
+		const spy = vi.spyOn(globalThis, 'fetch');
+
+		expect(api.books.exportUrl('Pastoral', { format: 'md', include: ['highlights'] })).toBe(
+			'/api/books/Pastoral/export?format=md&include=highlights&group=auto',
+		);
+		expect(api.books.exportUrl('Pastoral', { format: 'csv', include: ['clippings'] })).toBe(
+			'/api/books/Pastoral/export?format=csv&include=clippings&group=auto',
+		);
+		expect(
+			api.books.exportUrl('Pastoral', {
+				format: 'json',
+				include: ['notes'],
+				group: 'chapter',
+			}),
+		).toBe('/api/books/Pastoral/export?format=json&include=notes&group=chapter');
+		expect(spy).not.toHaveBeenCalled();
+	});
+
+	it('joins include with commas rather than repeating the param', () => {
+		const url = api.books.exportUrl('Pastoral', {
+			format: 'md',
+			include: ['highlights', 'clippings'],
+		});
+
+		expect(url).toContain('include=highlights%2Cclippings');
+		expect(url.match(/include=/g)).toHaveLength(1);
+	});
+
+	it('URL-encodes the slug', () => {
+		expect(
+			api.books.exportUrl('Fifteen Dogs', { format: 'md', include: ['highlights'] }),
+		).toContain('/api/books/Fifteen%20Dogs/export?');
+	});
+});
+
+describe('api.books.exportJson', () => {
+	it('GETs the json format of the export endpoint', async () => {
+		const spy = mockFetch({ book_slug: 'pastoral', groups: [] });
+
+		await api.books.exportJson('Pastoral', ['clippings']);
+
+		expect(spy).toHaveBeenCalledWith(
+			'/api/books/Pastoral/export?format=json&include=clippings&group=auto',
+		);
+	});
+});
+
+// ------------------------------------------------------------------ //
+// /api/on-this-day and /api/review                                     //
+// ------------------------------------------------------------------ //
+
+describe('api.onThisDay', () => {
+	it('omits date when not given', async () => {
+		const spy = mockFetch({ date: '2026-11-08', total: 0, years: [] });
+
+		await api.onThisDay();
+
+		expect(spy).toHaveBeenCalledWith('/api/on-this-day');
+	});
+
+	it('passes an explicit date', async () => {
+		const spy = mockFetch({ date: '2025-07-04', total: 0, years: [] });
+
+		await api.onThisDay('2025-07-04');
+
+		expect(spy).toHaveBeenCalledWith('/api/on-this-day?date=2025-07-04');
+	});
+});
+
+describe('api.review', () => {
+	it('defaults to the spaced strategy', async () => {
+		const spy = mockFetch({ items: [] });
+
+		await api.review();
+
+		expect(spy).toHaveBeenCalledWith('/api/review?strategy=spaced&limit=10');
+	});
+
+	it('builds the query for a seeded random pass', async () => {
+		const spy = mockFetch({ items: [] });
+
+		await api.review({ strategy: 'random', seed: '2026-11-07', limit: 3 });
+
+		expect(spy).toHaveBeenCalledWith('/api/review?strategy=random&limit=3&seed=2026-11-07');
+	});
+
+	it('joins kinds with commas', async () => {
+		const spy = mockFetch({ items: [] });
+
+		await api.review({ kinds: ['highlight', 'clipping'] });
+
+		expect(spy).toHaveBeenCalledWith(
+			'/api/review?strategy=spaced&limit=10&kinds=highlight%2Cclipping',
+		);
+	});
+});
+
+describe('api.reviewSeen', () => {
+	it('POSTs the rating to the seen endpoint', async () => {
+		const spy = mockFetch({ kind: 'highlight', ref_id: 41, interval_days: 2 });
+
+		await api.reviewSeen('highlight', 41, 'good');
+
+		expect(spy).toHaveBeenCalledWith(
+			'/api/review/highlight/41/seen',
+			expect.objectContaining({
+				method: 'POST',
+				body: JSON.stringify({ rating: 'good' }),
+			}),
+		);
+	});
+});

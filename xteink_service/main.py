@@ -14,6 +14,7 @@ import uvicorn
 
 from xteink_service import covers, search_index
 from xteink_service.archiver import ScreenshotArchiver
+from xteink_service.koreader_sync import _store as koreader_store
 from xteink_service.koreader_sync import app as koreader_app
 from xteink_service.state import SyncState
 from xteink_service.watcher import poll_for_device, wait_for_offline
@@ -103,6 +104,9 @@ async def main() -> None:
     # fresh deployment is not left unmigrated until the device first connects.
     SyncState(state_db)
     covers.init_db(state_db)
+    # koreader.db is otherwise created on the first device push, which leaves
+    # the reading-log and stats endpoints failing until the X4 syncs once.
+    koreader_store.init_db()
 
     # A first run (or a restore) starts with an empty index; building it can take
     # a while over a large archive, so keep it off the event loop.

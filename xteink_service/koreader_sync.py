@@ -191,6 +191,10 @@ class ProgressStore:
             self._initialized = True
         return sqlite3.connect(self.db_path)
 
+    def init_db(self) -> None:
+        """Create the schema now instead of on first device push."""
+        self._connect().close()
+
     def _init_db(self) -> None:
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         with sqlite3.connect(self.db_path) as conn:

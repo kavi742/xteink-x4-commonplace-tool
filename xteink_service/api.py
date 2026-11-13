@@ -540,6 +540,55 @@ class CoverFetchIn(BaseModel):
     force: bool = False
 
 
+class CoverUrlIn(BaseModel):
+    url: str
+
+
+def _cover_title_for_slug(slug: str) -> str:
+    """The book_covers key for a slug, which is keyed by title not slug.
+
+    Prefers the screenshot folder name, because that is the folder the cover
+    file is written into; falls back to the alias title for a book that has
+    only ever reported reading progress.
+    """
+    target = canonical_book_slug(slug)
+    with _state_conn() as conn:
+        for title in _book_titles_for_slug(conn, slug):
+            return title
+        for row in conn.execute("SELECT title FROM document_aliases"):
+            if canonical_book_slug(row["title"]) == target:
+                return row["title"]
+    raise HTTPException(status_code=404, detail=f"Book '{slug}' not found")
+
+
+@router.put("/api/books/{slug}/cover")
+async def set_book_cover(slug: str, body: CoverUrlIn):
+    """Replace a book's cover with an image the reader points at."""
+    from xteink_service.covers import CoverError, set_cover_from_url
+    title = _cover_title_for_slug(slug)
+    try:
+        info = await set_cover_from_url(
+            _state_db(), str(_vault_path()), title, body.url.strip()
+        )
+    except CoverError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"could not fetch that image: {exc}") from exc
+    return {
+        "slug": canonical_book_slug(slug),
+        "cover_url": f"/api/books/{canonical_book_slug(slug)}/cover?v={info['version']}",
+        "source": info["source"],
+    }
+
+
+@router.delete("/api/books/{slug}/cover")
+async def delete_book_cover(slug: str):
+    """Remove a book's cover so the automatic lookup can claim it again."""
+    from xteink_service.covers import clear_cover
+    title = _cover_title_for_slug(slug)
+    return clear_cover(_state_db(), str(_vault_path()), title)
+
+
 @router.post("/api/covers/fetch")
 async def fetch_covers(body: CoverFetchIn | None = None):
     """Fetch covers now instead of waiting for the next File Transfer."""

@@ -83,8 +83,26 @@ def test_init_db_is_idempotent(tmp_path):
     covers.init_db(state_db)
     with sqlite3.connect(state_db) as conn:
         cols = [r[1] for r in conn.execute("PRAGMA table_info(book_covers)")]
-    assert cols == ["title", "cover_path", "version", "status", "updated_at"]
+    assert cols == ["title", "cover_path", "version", "status", "updated_at", "source"]
     assert covers.get_covers(state_db) == {}
+
+
+def test_source_column_is_added_to_an_existing_table(tmp_path):
+    """A deployment that already has book_covers must gain source in place."""
+    state_db = str(tmp_path / "state.db")
+    with sqlite3.connect(state_db) as conn:
+        conn.execute("""
+            CREATE TABLE book_covers (
+                title TEXT PRIMARY KEY, cover_path TEXT NOT NULL DEFAULT '',
+                version TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'none',
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.execute("INSERT INTO book_covers (title, status) VALUES ('Pastoral','ok')")
+
+    covers.init_db(state_db)
+
+    assert covers.get_covers(state_db)["Pastoral"]["source"] == covers.SOURCE_AUTO
 
 
 # ------------------------------------------------------------------ #
@@ -443,3 +461,120 @@ def test_covers_fetch_endpoint_returns_counts(cover_api, monkeypatch):
     r = client.post("/api/covers/fetch", json={"force": False})
     assert r.status_code == 200
     assert r.json() == {"fetched": 0, "missing": 2, "skipped": 0}
+
+
+# ------------------------------------------------------------------ #
+# Hand-set covers                                                      #
+# ------------------------------------------------------------------ #
+
+@pytest.mark.parametrize("url, fragment", [
+    ("http://example.com/c.jpg", "https"),
+    ("ftp://example.com/c.jpg", "https"),
+    ("https:///c.jpg", "https"),
+])
+@pytest.mark.asyncio
+async def test_a_non_https_url_is_refused(url, fragment):
+    with pytest.raises(covers.CoverError) as exc:
+        await covers._download_supplied(_FakeSession(), url)
+    assert fragment in str(exc.value)
+
+
+@pytest.mark.parametrize("addr", [
+    "127.0.0.1", "10.0.0.5", "192.168.1.1", "172.17.0.2", "169.254.169.254",
+])
+@pytest.mark.asyncio
+async def test_a_url_resolving_to_a_private_address_is_refused(addr, monkeypatch):
+    """The server performs this fetch, so an unguarded URL would let the web UI
+    reach the homelab: cloud metadata, the Docker bridge, the router."""
+    monkeypatch.setattr(
+        covers.socket, "getaddrinfo",
+        lambda *a, **k: [(None, None, None, "", (addr, 443))],
+    )
+    with pytest.raises(covers.CoverError) as exc:
+        await covers._download_supplied(_FakeSession(), "https://evil.test/c.jpg")
+    assert addr in str(exc.value)
+
+
+@pytest.mark.asyncio
+async def test_a_redirect_is_refused(monkeypatch):
+    """A 302 to a private address would walk straight past the host check."""
+    monkeypatch.setattr(
+        covers.socket, "getaddrinfo",
+        lambda *a, **k: [(None, None, None, "", ("93.184.216.34", 443))],
+    )
+    session = _FakeSession(_FakeResponse(b"", status=302))
+    with pytest.raises(covers.CoverError) as exc:
+        await covers._download_supplied(session, "https://example.com/c.jpg")
+    assert "redirect" in str(exc.value)
+
+
+@pytest.mark.asyncio
+async def test_an_oversized_body_is_refused(monkeypatch):
+    monkeypatch.setattr(
+        covers.socket, "getaddrinfo",
+        lambda *a, **k: [(None, None, None, "", ("93.184.216.34", 443))],
+    )
+    session = _FakeSession(
+        _FakeResponse(b"", status=200, headers={"Content-Length": str(3 * 1024 * 1024)})
+    )
+    with pytest.raises(covers.CoverError) as exc:
+        await covers._download_supplied(session, "https://example.com/c.jpg")
+    assert "2 MB" in str(exc.value)
+
+
+@pytest.mark.asyncio
+async def test_setting_a_cover_by_url_stores_it_as_manual(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        covers.socket, "getaddrinfo",
+        lambda *a, **k: [(None, None, None, "", ("93.184.216.34", 443))],
+    )
+    state_db = str(tmp_path / "state.db")
+    vault = str(tmp_path / "vault")
+    session = _FakeSession(_FakeResponse(_png(300, 450)))
+
+    info = await covers.set_cover_from_url(
+        state_db, vault, "Pastoral", "https://example.com/c.png", session=session
+    )
+
+    assert info["status"] == covers.STATUS_OK
+    assert info["source"] == covers.SOURCE_MANUAL
+    assert (tmp_path / "vault" / "Books" / "Pastoral" / "cover.jpg").is_file()
+
+
+@pytest.mark.asyncio
+async def test_a_non_image_body_reports_why(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        covers.socket, "getaddrinfo",
+        lambda *a, **k: [(None, None, None, "", ("93.184.216.34", 443))],
+    )
+    session = _FakeSession(_FakeResponse(b"<html>not an image</html>"))
+    with pytest.raises(covers.CoverError) as exc:
+        await covers.set_cover_from_url(
+            str(tmp_path / "s.db"), str(tmp_path / "v"), "Pastoral",
+            "https://example.com/c.png", session=session,
+        )
+    assert "usable" in str(exc.value)
+
+
+def test_a_forced_refresh_leaves_a_hand_set_cover_alone(tmp_path):
+    state_db = str(tmp_path / "state.db")
+    covers._store(state_db, "Pastoral", "Pastoral/cover.jpg", "v1",
+                  covers.STATUS_OK, covers.SOURCE_MANUAL)
+    covers._store(state_db, "Ring", "Ring/cover.jpg", "v2", covers.STATUS_OK)
+
+    assert covers._manual_titles(state_db) == {"Pastoral"}
+
+
+def test_clearing_a_cover_removes_the_row_and_the_file(tmp_path):
+    state_db = str(tmp_path / "state.db")
+    vault = tmp_path / "vault"
+    book = vault / "Books" / "Pastoral"
+    book.mkdir(parents=True)
+    (book / "cover.jpg").write_bytes(b"jpeg")
+    covers._store(state_db, "Pastoral", "Pastoral/cover.jpg", "v1",
+                  covers.STATUS_OK, covers.SOURCE_MANUAL)
+
+    covers.clear_cover(state_db, str(vault), "Pastoral")
+
+    assert covers.get_covers(state_db) == {}
+    assert not (book / "cover.jpg").exists()

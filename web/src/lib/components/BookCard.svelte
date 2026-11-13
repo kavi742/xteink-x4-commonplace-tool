@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { Book } from '$lib/api';
-	let { book }: { book: Book } = $props();
+	let { book, showCover = true }: { book: Book; showCover?: boolean } = $props();
 
 	let isCollection = $derived(book.kind === 'articles');
 	let href = $derived(
@@ -16,7 +16,9 @@
 
 	// Recorded by URL rather than as a flag so a card reused for another book retries that book's cover.
 	let failedUrl = $state<string | null>(null);
-	let coverUrl = $derived(book.cover_url !== failedUrl ? book.cover_url : null);
+	let coverUrl = $derived(
+		showCover && book.cover_url !== failedUrl ? book.cover_url : null
+	);
 
 	function hideBrokenCover() {
 		failedUrl = book.cover_url;

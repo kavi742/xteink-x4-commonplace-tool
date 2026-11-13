@@ -19,6 +19,12 @@ export interface Book {
 	last_read_at: number | null;
 }
 
+export interface SetCoverResponse {
+	slug: string;
+	cover_url: string;
+	source: 'openlibrary' | 'manual';
+}
+
 /** One article as listed by /api/articles. */
 export interface Article {
 	slug: string;
@@ -461,6 +467,22 @@ function createApi(customFetch?: Fetch) {
 		return res.json() as Promise<T>;
 	}
 
+	/** Like put, but raises the server's `detail` so a rejected cover URL can
+	 *  tell the reader why rather than showing a bare status code. */
+	async function putWithReason<T>(url: string, body: unknown): Promise<T> {
+		const res = await send(url, {
+			method: 'PUT',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify(body),
+		});
+		const data = await res.json().catch(() => null);
+		if (!res.ok) {
+			const detail = data && typeof data.detail === 'string' ? data.detail : null;
+			throw new Error(detail ?? `${res.status} ${res.statusText}`);
+		}
+		return data as T;
+	}
+
 	// A download is a plain anchor at this URL so the browser honours
 	// Content-Disposition; only "copy as JSON" goes through fetch.
 	function exportUrl(
@@ -493,6 +515,14 @@ function createApi(customFetch?: Fetch) {
 			exportUrl,
 			exportJson: (slug: string, include: ExportInclude[]) =>
 				get<BookExport>(exportUrl(slug, { format: 'json', include })),
+			setCover: (slug: string, url: string) =>
+				putWithReason<SetCoverResponse>(
+					`/api/books/${encodeURIComponent(slug)}/cover`, { url },
+				),
+			clearCover: (slug: string) =>
+				del<{ title: string; status: string }>(
+					`/api/books/${encodeURIComponent(slug)}/cover`,
+				),
 		},
 
 		articles: {

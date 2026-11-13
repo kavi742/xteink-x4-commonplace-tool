@@ -2,6 +2,7 @@
 	import DateGroup from '$lib/components/DateGroup.svelte';
 	import ReadingCalendar from '$lib/components/ReadingCalendar.svelte';
 	import ClippingCard from '$lib/components/ClippingCard.svelte';
+	import CoverEditor from '$lib/components/CoverEditor.svelte';
 	import ExportMenu from '$lib/components/ExportMenu.svelte';
 	import { api, type Screenshot, type Clipping, type HighlightWithMeta } from '$lib/api';
 	import { panel } from '$lib/panel.svelte';
@@ -55,6 +56,7 @@
 <div style="display:flex;align-items:baseline;gap:.75rem;margin-bottom:1.25rem">
 	<h1 class="page-title" style="margin-bottom:0;flex:1">{book}</h1>
 	<span style="font-size:12px;color:var(--text-muted)">{visibleCount} / {screenshots.length}</span>
+	<CoverEditor slug={book} />
 	<ExportMenu slug={book} />
 </div>
 

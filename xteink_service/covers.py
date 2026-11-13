@@ -18,8 +18,10 @@ image is re-encoded small and written beside that book's screenshots at
 """
 import hashlib
 import io
+import ipaddress
 import logging
 import os
+import socket
 import sqlite3
 import urllib.parse
 from pathlib import Path
@@ -35,6 +37,9 @@ logger = logging.getLogger(__name__)
 
 STATUS_OK = "ok"
 STATUS_NONE = "none"
+
+SOURCE_AUTO = "openlibrary"
+SOURCE_MANUAL = "manual"
 
 _COVER_HOST = "covers.openlibrary.org"
 _COVER_URL = "https://covers.openlibrary.org/b/id/{cover_id}-L.jpg"
@@ -66,9 +71,16 @@ def _conn(state_db: str) -> sqlite3.Connection:
             cover_path TEXT NOT NULL DEFAULT '',
             version    TEXT NOT NULL DEFAULT '',
             status     TEXT NOT NULL DEFAULT 'none',
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            source     TEXT NOT NULL DEFAULT 'openlibrary'
         )
     """)
+    try:
+        conn.execute(
+            "ALTER TABLE book_covers ADD COLUMN source TEXT NOT NULL DEFAULT 'openlibrary'"
+        )
+    except sqlite3.OperationalError:
+        pass  # column already exists
     conn.commit()
     return conn
 
@@ -79,32 +91,34 @@ def init_db(state_db: str) -> None:
 
 
 def get_covers(state_db: str) -> dict[str, dict]:
-    """Return ``{title: {"cover_path", "version", "status"}}`` for cached books."""
+    """Return ``{title: {"cover_path", "version", "status", "source"}}``."""
     conn = _conn(state_db)
     try:
         return {
-            r[0]: {"cover_path": r[1], "version": r[2], "status": r[3]}
+            r[0]: {"cover_path": r[1], "version": r[2], "status": r[3], "source": r[4]}
             for r in conn.execute(
-                "SELECT title, cover_path, version, status FROM book_covers"
+                "SELECT title, cover_path, version, status, source FROM book_covers"
             )
         }
     finally:
         conn.close()
 
 
-def _store(state_db: str, title: str, cover_path: str, version: str, status: str) -> dict:
+def _store(state_db: str, title: str, cover_path: str, version: str, status: str,
+           source: str = SOURCE_AUTO) -> dict:
     conn = _conn(state_db)
     try:
         conn.execute(
             "INSERT OR REPLACE INTO book_covers "
-            "(title, cover_path, version, status, updated_at) "
-            "VALUES (?, ?, ?, ?, datetime('now'))",
-            (title, cover_path, version, status),
+            "(title, cover_path, version, status, updated_at, source) "
+            "VALUES (?, ?, ?, ?, datetime('now'), ?)",
+            (title, cover_path, version, status, source),
         )
         conn.commit()
     finally:
         conn.close()
-    return {"title": title, "cover_path": cover_path, "version": version, "status": status}
+    return {"title": title, "cover_path": cover_path, "version": version,
+            "status": status, "source": source}
 
 
 # ------------------------------------------------------------------ #
@@ -260,6 +274,108 @@ async def fetch_cover(
 
 
 # ------------------------------------------------------------------ #
+# Hand-set covers                                                      #
+# ------------------------------------------------------------------ #
+
+class CoverError(ValueError):
+    """A supplied cover URL could not be used, with a reason for the reader."""
+
+
+def _reject_private_host(hostname: str) -> None:
+    """Refuse a hostname that resolves to anything but a public address.
+
+    The reader supplies this URL and the server is what fetches it, so without
+    this the web UI is an SSRF gadget pointed at the homelab: link-local
+    metadata, the Docker bridge, other containers, the router.
+    """
+    try:
+        infos = socket.getaddrinfo(hostname, 443, proto=socket.IPPROTO_TCP)
+    except socket.gaierror as exc:
+        raise CoverError(f"cannot resolve {hostname}") from exc
+    if not infos:
+        raise CoverError(f"cannot resolve {hostname}")
+    for info in infos:
+        ip = ipaddress.ip_address(info[4][0])
+        if (ip.is_private or ip.is_loopback or ip.is_link_local
+                or ip.is_multicast or ip.is_reserved or ip.is_unspecified):
+            raise CoverError(f"{hostname} resolves to the private address {ip}")
+
+
+async def _download_supplied(session: aiohttp.ClientSession, url: str) -> bytes:
+    """Fetch a reader-supplied cover URL, with the same cap as the auto path."""
+    parts = urllib.parse.urlsplit(url)
+    if parts.scheme != "https" or not parts.hostname:
+        raise CoverError("the cover URL must start with https://")
+    _reject_private_host(parts.hostname)
+
+    # No redirects: a 302 to a private address would walk straight past the
+    # check above. Pasting the direct image URL is the fix.
+    async with session.get(
+        url, headers={"User-Agent": _USER_AGENT}, allow_redirects=False
+    ) as resp:
+        if resp.status in (301, 302, 303, 307, 308):
+            raise CoverError("that URL redirects; paste the direct image link")
+        if resp.status != 200:
+            raise CoverError(f"the server answered HTTP {resp.status}")
+        declared = resp.headers.get("Content-Length")
+        if declared and declared.isdigit() and int(declared) > _MAX_BYTES:
+            raise CoverError("that image is larger than 2 MB")
+        raw = bytearray()
+        async for chunk in resp.content.iter_chunked(64 * 1024):
+            raw.extend(chunk)
+            if len(raw) > _MAX_BYTES:
+                raise CoverError("that image is larger than 2 MB")
+    return bytes(raw)
+
+
+async def set_cover_from_url(
+    state_db: str, vault: str, title: str, url: str,
+    session: aiohttp.ClientSession | None = None,
+) -> dict:
+    """Replace a book's cover with the image at ``url``.
+
+    Raises ``CoverError`` with a reader-facing reason rather than caching a
+    miss: an explicit correction that fails should say why, not go quiet.
+    """
+    if session is None:
+        async with aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=_TIMEOUT)
+        ) as own:
+            raw = await _download_supplied(own, url)
+    else:
+        raw = await _download_supplied(session, url)
+
+    data = _encode_cover(raw)
+    if not data:
+        raise CoverError("that file is not a usable JPEG, PNG or WEBP image")
+
+    cover_path = _write_cover(vault, title, data)
+    if cover_path is None:
+        raise CoverError(f"no vault folder can be derived from the title {title!r}")
+
+    version = hashlib.sha256(data).hexdigest()[:12]
+    logger.info("Cover set by hand for %s: %s (%s)", title, cover_path, version)
+    return _store(state_db, title, cover_path, version, STATUS_OK, SOURCE_MANUAL)
+
+
+def clear_cover(state_db: str, vault: str, title: str) -> dict:
+    """Drop a book's cover and let the automatic lookup have it again."""
+    folder = _cover_folder(title)
+    if folder:
+        existing = Path(vault) / "Books" / folder / "cover.jpg"
+        if existing.is_file():
+            existing.unlink()
+    conn = _conn(state_db)
+    try:
+        conn.execute("DELETE FROM book_covers WHERE title = ?", (title,))
+        conn.commit()
+    finally:
+        conn.close()
+    logger.info("Cover cleared for %s", title)
+    return {"title": title, "status": STATUS_NONE, "source": SOURCE_AUTO}
+
+
+# ------------------------------------------------------------------ #
 # Resolution over the library                                          #
 # ------------------------------------------------------------------ #
 
@@ -307,16 +423,31 @@ def _candidate_titles(state_db: str, koreader_db: str) -> list[str]:
 
 
 def _resolved_titles(state_db: str) -> set[str]:
-    """Titles with a cover, or with a miss recorded inside the retry window."""
+    """Titles with a cover, a recent miss, or a hand-set cover.
+
+    A manual cover is always resolved: a --force refresh must never replace a
+    cover the reader chose deliberately with whatever Open Library guesses.
+    """
     conn = _conn(state_db)
     try:
         return {
             r[0] for r in conn.execute(
                 "SELECT title FROM book_covers "
-                "WHERE status = ? OR updated_at > datetime('now', ?)",
-                (STATUS_OK, f"-{_RETRY_NONE_DAYS} days"),
+                "WHERE status = ? OR source = ? OR updated_at > datetime('now', ?)",
+                (STATUS_OK, SOURCE_MANUAL, f"-{_RETRY_NONE_DAYS} days"),
             )
         }
+    finally:
+        conn.close()
+
+
+def _manual_titles(state_db: str) -> set[str]:
+    """Titles whose cover was set by hand."""
+    conn = _conn(state_db)
+    try:
+        return {r[0] for r in conn.execute(
+            "SELECT title FROM book_covers WHERE source = ?", (SOURCE_MANUAL,)
+        )}
     finally:
         conn.close()
 
@@ -339,7 +470,8 @@ async def resolve_book_covers(
     result = {"fetched": 0, "missing": 0, "skipped": 0}
     try:
         candidates = _candidate_titles(state_db, koreader_db)
-        resolved = set() if force else _resolved_titles(state_db)
+        # force retries misses, but never a cover the reader set by hand.
+        resolved = _manual_titles(state_db) if force else _resolved_titles(state_db)
     except sqlite3.Error as exc:
         logger.debug("cover resolution skipped: %s", exc)
         return result

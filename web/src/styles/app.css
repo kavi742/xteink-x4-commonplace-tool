@@ -1,46 +1,28 @@
-/* Every neutral derives from one hue (--tint-h) and one chroma (--tint-c);
-   dark and light differ only in the lightness ramp. Alpha needs the slash
-   form, oklch(L C H / A); comma syntax silently invalidates the value. */
+/* Catppuccin Macchiato (dark) and Latte (light). The neutrals are the
+   published palette values, not a derived ramp: one hue and chroma cannot
+   reproduce them. Accents still use oklch, where alpha needs the slash form,
+   oklch(L C H / A); comma syntax silently invalidates the value. */
 :root {
-	/* the two numbers that drive every neutral */
-	--tint-h: 265;
-	--tint-c: 0.022;
-
-	/* accent */
-	--accent-h: 250;
-	--accent-c: 0.11;
-
-	/* lightness ramp (dark is the default) */
-	--l-bg: 23%;
-	--l-sunken: 19%;
-	--l-surface: 29%;
-	--l-border: 38%;
-	--l-muted: 76%;
-	--l-text: 88%;
-	--l-accent: 72%;
-	--l-accent-hi: 80%;
-
-	/* derived neutrals */
-	--bg:         oklch(var(--l-bg)      var(--tint-c) var(--tint-h));
-	--bg-sidebar: oklch(var(--l-sunken)  var(--tint-c) var(--tint-h));
-	--bg-card:    oklch(var(--l-surface) var(--tint-c) var(--tint-h));
-	--border:     oklch(var(--l-border)  var(--tint-c) var(--tint-h));
-	--active-bg:  oklch(var(--l-border)  var(--tint-c) var(--tint-h));
-	--text:       oklch(var(--l-text)    var(--tint-c) var(--tint-h));
-	--text-muted: oklch(var(--l-muted)   var(--tint-c) var(--tint-h));
-	--link:       oklch(var(--l-accent)    var(--accent-c) var(--accent-h));
-	--link-hover: oklch(var(--l-accent-hi) var(--accent-c) var(--accent-h));
+	--bg:         #24273a;
+	--bg-sidebar: #1e2030;
+	--bg-card:    #363a4f;
+	--border:     #494d64;
+	--active-bg:  #494d64;
+	--text:       #cad3f5;
+	--text-muted: #a5adcb;
+	--link:       #8aadf4;
+	--link-hover: #b7bdf8;
 
 	/* highlight marks */
 	--mark-h: 80;
 	--mark-bg: oklch(84% 0.12 var(--mark-h));
-	--mark-fg: oklch(var(--l-bg) var(--tint-c) var(--tint-h));
+	--mark-fg: var(--bg);
 	--mark-stroke: oklch(84% 0.12 var(--mark-h) / 0.9);
 	--mark-fill: oklch(84% 0.12 var(--mark-h) / 0.3);
 
 	/* reading heatmap */
 	--heat-h: 145;
-	--heat-0: oklch(var(--l-surface) var(--tint-c) var(--tint-h));
+	--heat-0: var(--bg-card);
 	--heat-1: oklch(45% 0.06 var(--heat-h));
 	--heat-2: oklch(57% 0.10 var(--heat-h));
 	--heat-3: oklch(68% 0.14 var(--heat-h));
@@ -61,19 +43,20 @@
 	color-scheme: dark;
 }
 
-/* Light mode shifts lightness only. Hue and chroma are untouched, which is
-   what keeps the two modes recognisably the same interface. */
+/* Catppuccin Latte, the published light counterpart. Nothing sets
+   data-theme yet, so this is inert until a toggle is wired up. */
 :root[data-theme='light'] {
-	--l-bg: 97%;
-	--l-sunken: 94%;
-	--l-surface: 99%;
-	--l-border: 86%;
-	--l-muted: 48%;
-	--l-text: 26%;
-	--l-accent: 48%;
-	--l-accent-hi: 40%;
-	--mark-fg: oklch(26% var(--tint-c) var(--tint-h));
-	--heat-0: oklch(var(--l-sunken) var(--tint-c) var(--tint-h));
+	--bg:         #eff1f5;
+	--bg-sidebar: #e6e9ef;
+	--bg-card:    #ccd0da;
+	--border:     #bcc0cc;
+	--active-bg:  #bcc0cc;
+	--text:       #4c4f69;
+	--text-muted: #6c6f85;
+	--link:       #1e66f5;
+	--link-hover: #7287fd;
+	--mark-fg:    #4c4f69;
+	--heat-0:     var(--bg-sidebar);
 	color-scheme: light;
 }
 
